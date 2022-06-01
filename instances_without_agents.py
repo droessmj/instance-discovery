@@ -31,16 +31,26 @@ def normalize_input(input, identifier):
     if len(input) > 0:
         data = input[0]['data']
         for r in data:
+            # TODO: cleanup this mess....
             if identifier == 'agent':
-                if 'VmProvider' in r['tags'].keys() and r['tags']['VmProvider'] == 'GCE':
+                if ('tags' in r.keys() 
+                     and 'VmProvider' in r['tags'].keys() 
+                     and r['tags']['VmProvider'] == 'GCE'):
+
                     normalized_output.append(r['hostname'])
-                elif 'VmProvider' in r['tags'].keys() and r['tags']['VmProvider'] == 'AWS':
-                    normalized_output.append(r['tags']['InstanceId'])
+
+                elif ('tags' in r.keys() 
+                      and 'VmProvider' in r['tags'].keys() 
+                      and r['tags']['VmProvider'] == 'AWS'):
+
+                    if 'InstanceId' in r['tags'].keys(): # EC2 use case
+                        normalized_output.append(r['tags']['InstanceId'])
+                    else: # Fargate use case 
+                        normalized_output.append(r['tags']['Hostname'])
                 else:
                     normalized_output.append(r['hostname'])
-            elif identifier == 'Gcp':
-                normalized_output.append(r['urn'])
-            elif identifier == 'Aws':
+
+            elif identifier == 'Gcp' or identifier == 'Aws':
                 normalized_output.append(r['urn'])
             else:
                 raise Exception (f'Error normalizing data set inputs! input: {input}, identifier: {identifier}')
@@ -51,6 +61,9 @@ def normalize_input(input, identifier):
 
 
 def main(args):
+
+    if not args.profile and not args.account and not args.subaccount and not args.api_key and not args.api_secret:
+        args.profile = 'default'
 
     try:
         client = LaceworkClient(

@@ -18,6 +18,25 @@ class InstanceResult():
     def toJson(self):
         return json.dumps(self.__dict__, indent=4, sort_keys=True)
 
+    def standardPrint(self):
+        if len(self.instances_without_agents) > 0:
+            print(f'Instances without agent:')
+            for instance in self.instances_without_agents:
+                print(f'\t{instance}')
+            print('\n')
+
+        if len(self.instances_with_agents) > 0:
+            print(f'Instances reconciled with agent:')
+            for instance in self.instances_with_agents:
+                print(f'\t{instance}')
+            print('\n')
+
+        if len(self.agents_without_inventory) > 0:
+            print(f'Agents without corresponding inventory:')
+            for instance in self.agents_without_inventory:
+                print(f'\t{instance}')
+            print('\n')
+
 
 def check_truncation(results):
     if results is list:
@@ -143,27 +162,11 @@ def main(args):
         if not any(instance in instance_urn for instance_urn in matched_instances):
             agents_without_inventory.append(instance)
 
+    instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.json:
-        instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
         print(instance_result.toJson())
     else:
-        if len(instances_without_agents) > 0:
-            print(f'Instances without agent:')
-            for instance in instances_without_agents:
-                print(f'\t{instance}')
-            print('\n')
-
-        if len(matched_instances) > 0:
-            print(f'Instances reconciled with agent:')
-            for instance in matched_instances:
-                print(f'\t{instance}')
-            print('\n')
-
-        if len(agents_without_inventory) > 0:
-            print(f'Agents without corresponding inventory:')
-            for instance in agents_without_inventory:
-                print(f'\t{instance}')
-            print('\n')
+        instance_result.standardPrint()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(

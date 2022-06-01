@@ -12,7 +12,7 @@ Supports GCP & AWS. Azure to follow shortly.
 
 ``` python
 pip install -r requirements.txt
-python3 instances_without_agents.py 
+python3 instances_without_agents.py --json
 ```
 
 ## Arguments

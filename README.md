@@ -6,6 +6,15 @@ A script to review current Lacework instance inventories against active agents t
 
 Supports GCP & AWS. Azure to follow shortly.
 
+## Results
+
+There are three separate result sets:
+- Instances without Agents -- These are resources which we have in Resource Inventory which could not be reconciled with agents reporting in. 
+- Agents without Inventory -- These are agents which are reporting in, but for which we do not have an inventory record of the instance. This could be due to inventory staleness or from agents running on uncovered Cloud Accounts or on-prem VMs.
+- Instances with Agents -- These are the inventory records which correctly reconcile with agent info. 
+
+Note: As we don't currently inventory Fargate tasks, these will always show as "Agents without Inventory"
+
 ## How to Run
 
 `docker run -v ~/.lacework.toml:/home/user/.lacework.toml droessmj/instance-discovery --json`

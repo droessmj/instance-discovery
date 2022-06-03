@@ -6,6 +6,15 @@ A script to review current Lacework instance inventories against active agents t
 
 Supports GCP & AWS. Azure to follow shortly.
 
+## How to Run
+
+`docker run -v ~/.lacework.toml:/home/user/.lacework.toml droessmj/instance-discovery --json`
+
+``` python
+pip install -r requirements.txt
+python3 instances_without_agents.py --json
+```
+
 ## Results
 
 There are three separate result sets:
@@ -15,14 +24,6 @@ There are three separate result sets:
 
 Note: As we don't currently inventory Fargate tasks, these will always show as "Agents without Inventory"
 
-## How to Run
-
-`docker run -v ~/.lacework.toml:/home/user/.lacework.toml droessmj/instance-discovery --json`
-
-``` python
-pip install -r requirements.txt
-python3 instances_without_agents.py --json
-```
 
 ## Arguments
 

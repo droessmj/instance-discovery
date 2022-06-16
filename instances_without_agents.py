@@ -39,8 +39,9 @@ class InstanceResult():
 
 
 def check_truncation(results):
-    if results is list:
-        if len(results) == MAX_RESULT_SET:
+    if type(results) == list:
+        print(len(results))
+        if len(results) >= MAX_RESULT_SET:
             return True
     return False
 
@@ -154,6 +155,7 @@ def main(args):
     for instance_urn in all_instances_inventory:
         if all(agent_instance not in instance_urn for agent_instance in list_agent_instances):
             instances_without_agents.append(instance_urn)
+            # TODO: add secondary check for "premptible instances"
         else:
             matched_instances.append(instance_urn)
 

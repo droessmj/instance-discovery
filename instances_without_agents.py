@@ -10,6 +10,7 @@ import os
 MAX_RESULT_SET = 500_000
 LOOKBACK_DAYS = 1
 GCP_INVENTORY_CACHE = {}
+AWS_INVENTORY_CACHE = {}
 
 
 class InstanceResult():
@@ -74,7 +75,8 @@ def normalize_input(input, identifier):
                     normalized_output.append(r['hostname'])
 
             elif identifier == 'Aws':
-                normalized_output.append(r['urn'])
+                normalized_output.append(r['resourceConfig']['InstanceId'])
+                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = r['urn']
 
             elif identifier == 'Gcp':
                 # TODO: #1 InstanceId tag == "Id" for GCP Resource Inventory
@@ -89,8 +91,13 @@ def normalize_input(input, identifier):
     return normalized_output
 
 
-def get_gcp_urn_from_instanceid(instanceId):
-    return GCP_INVENTORY_CACHE[instanceId]
+def get_urn_from_instanceid(instanceId):
+    if instanceId in AWS_INVENTORY_CACHE:
+        return AWS_INVENTORY_CACHE[instanceId]
+    elif instanceId in GCP_INVENTORY_CACHE:
+        return GCP_INVENTORY_CACHE[instanceId]
+    else:
+        raise Exception (f"Input instanceId {instanceId} not found in cache!")
 
 def main(args):
 
@@ -164,18 +171,14 @@ def main(args):
 
     instances_without_agents = list()
     matched_instances = list()
-    for instance_urn in all_instances_inventory:
-        if all(agent_instance not in instance_urn for agent_instance in list_agent_instances):
-            if instance_urn in list_gcp_instances:
-                instance_urn = get_gcp_urn_from_instanceid(instance_urn)
+    for instance_id in all_instances_inventory:
+        normalized_urn = get_urn_from_instanceid(instance_id)
+        if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
+            instances_without_agents.append(normalized_urn)
 
-            instances_without_agents.append(instance_urn)
             # TODO: add secondary check for "premptible instances"
         else:
-            if instance_urn in list_gcp_instances:
-                instance_urn = get_gcp_urn_from_instanceid(instance_urn)
-
-            matched_instances.append(instance_urn)
+            matched_instances.append(normalized_urn)
 
     agents_without_inventory = list()
     for instance in list_agent_instances:

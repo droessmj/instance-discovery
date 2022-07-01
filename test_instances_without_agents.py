@@ -15,12 +15,12 @@ def test_check_trucation_false():
     results = list([i for i in range(100)])
     assert(instances_without_agents.check_truncation(results) == False)
 
-def test_normalization_agent_data_ec2():
+# def test_normalization_agent_data_ec2():
 
-def test_normalization_agent_data_fargate():
+# def test_normalization_agent_data_fargate():
 
-def test_normalization_aws():
+# def test_normalization_aws():
 
-def test_normalization_gcp():
+# def test_normalization_gcp():
 
-def test_normalization_azure():
+# def test_normalization_azure():

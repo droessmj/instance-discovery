@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+from pickle import NONE
+from xml.dom.minidom import Identified
 from laceworksdk import LaceworkClient
 import json
 import argparse
@@ -7,6 +9,7 @@ import os
 
 MAX_RESULT_SET = 500_000
 LOOKBACK_DAYS = 1
+GCP_INVENTORY_CACHE = {}
 
 
 class InstanceResult():
@@ -40,7 +43,6 @@ class InstanceResult():
 
 def check_truncation(results):
     if type(results) == list:
-        print(len(results))
         if len(results) >= MAX_RESULT_SET:
             return True
     return False
@@ -56,22 +58,29 @@ def normalize_input(input, identifier):
                 if ('tags' in r.keys() 
                      and 'VmProvider' in r['tags'].keys() 
                      and r['tags']['VmProvider'] == 'GCE'):
-
-                    normalized_output.append(r['hostname'])
+                    
+                    # InstanceId is not in URN...
+                    normalized_output.append(r['tags']['InstanceId'])
 
                 elif ('tags' in r.keys() 
                       and 'VmProvider' in r['tags'].keys() 
                       and r['tags']['VmProvider'] == 'AWS'):
 
-                    if 'InstanceId' in r['tags'].keys(): # EC2 use case
+                    if 'InstanceId' in r['tags'].keys(): # EC2 use case - InstanceId is in URN
                         normalized_output.append(r['tags']['InstanceId'])
                     else: # Fargate use case 
                         normalized_output.append(r['tags']['Hostname'])
                 else:
                     normalized_output.append(r['hostname'])
 
-            elif identifier == 'Gcp' or identifier == 'Aws':
+            elif identifier == 'Aws':
                 normalized_output.append(r['urn'])
+
+            elif identifier == 'Gcp':
+                # TODO: #1 InstanceId tag == "Id" for GCP Resource Inventory
+                normalized_output.append(r['resourceConfig']['id'])
+                GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = r['urn']
+
             else:
                 raise Exception (f'Error normalizing data set inputs! input: {input}, identifier: {identifier}')
     else:
@@ -79,6 +88,9 @@ def normalize_input(input, identifier):
 
     return normalized_output
 
+
+def get_gcp_urn_from_instanceid(instanceId):
+    return GCP_INVENTORY_CACHE[instanceId]
 
 def main(args):
 
@@ -116,7 +128,6 @@ def main(args):
         logger.warning(f'WARNING: Agent Instances truncated at {MAX_RESULT_SET} records')
     logger.debug(f'Agent Instances: {list_agent_instances}\n')
 
-
     gcp_inventory = client.inventory.search(json={
             'timeFilter': { 
                 'startTime' : start_time, 
@@ -127,7 +138,8 @@ def main(args):
             ],
             'dataset': 'GcpCompliance'
         })
-    list_gcp_instances = normalize_input(list(gcp_inventory), 'Gcp')
+    GCP_INVENTORY_CACHE = list(gcp_inventory)
+    list_gcp_instances = normalize_input(GCP_INVENTORY_CACHE, 'Gcp')
     if check_truncation(list_gcp_instances):
         logger.warning(f'WARNING: GCP Instances truncated at {MAX_RESULT_SET} records')
     logger.debug(f'GCP Instances: {list_gcp_instances}\n')
@@ -154,9 +166,15 @@ def main(args):
     matched_instances = list()
     for instance_urn in all_instances_inventory:
         if all(agent_instance not in instance_urn for agent_instance in list_agent_instances):
+            if instance_urn in list_gcp_instances:
+                instance_urn = get_gcp_urn_from_instanceid(instance_urn)
+
             instances_without_agents.append(instance_urn)
             # TODO: add secondary check for "premptible instances"
         else:
+            if instance_urn in list_gcp_instances:
+                instance_urn = get_gcp_urn_from_instanceid(instance_urn)
+
             matched_instances.append(instance_urn)
 
     agents_without_inventory = list()

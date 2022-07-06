@@ -11,6 +11,7 @@ MAX_RESULT_SET = 500_000
 LOOKBACK_DAYS = 1
 GCP_INVENTORY_CACHE = {}
 AWS_INVENTORY_CACHE = {}
+AZURE_INVENTORY_CACHE = {}
 
 
 class InstanceResult():
@@ -96,8 +97,11 @@ def get_urn_from_instanceid(instanceId):
         return AWS_INVENTORY_CACHE[instanceId]
     elif instanceId in GCP_INVENTORY_CACHE:
         return GCP_INVENTORY_CACHE[instanceId]
+    elif instanceId in AZURE_INVENTORY_CACHE:
+        return AZURE_INVENTORY_CACHE[instanceId]
     else:
         raise Exception (f"Input instanceId {instanceId} not found in cache!")
+
 
 def main(args):
 
@@ -190,6 +194,7 @@ def main(args):
         print(instance_result.toJson())
     else:
         instance_result.standardPrint()
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(

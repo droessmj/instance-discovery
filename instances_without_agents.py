@@ -61,8 +61,8 @@ def normalize_input(input, identifier):
                      and 'VmProvider' in r['tags'].keys() 
                      and r['tags']['VmProvider'] == 'GCE'):
                     
-                    # InstanceId is not in URN...
                     normalized_output.append(r['tags']['InstanceId'])
+                    # TODO: store instanceId + hostname for labeling later
 
                 elif ('tags' in r.keys() 
                       and 'VmProvider' in r['tags'].keys() 

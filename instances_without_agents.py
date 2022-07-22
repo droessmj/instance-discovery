@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from pickle import NONE
+import re
 from xml.dom.minidom import Identified
 from laceworksdk import LaceworkClient
 import json
@@ -12,6 +13,7 @@ LOOKBACK_DAYS = 1
 GCP_INVENTORY_CACHE = {}
 AWS_INVENTORY_CACHE = {}
 AZURE_INVENTORY_CACHE = {}
+AGENT_CACHE = {}
 
 
 class InstanceResult():
@@ -19,6 +21,10 @@ class InstanceResult():
         self.instances_without_agents = list(instances_without_agents)
         self.instances_with_agents = list(instances_with_agents)
         self.agents_without_inventory = list(agents_without_inventory)
+
+        self.instances_without_agents.sort()
+        self.instances_with_agents.sort()
+        self.agents_without_inventory.sort()
 
     def toJson(self):
         return json.dumps(self.__dict__, indent=4, sort_keys=True)
@@ -53,7 +59,7 @@ def check_truncation(results):
 def normalize_input(input, identifier):
     normalized_output = list()
     if len(input) > 0:
-        data = input[0]['data']
+        data = input['data']
         for r in data:
             # TODO: cleanup this mess....
             if identifier == 'agent':
@@ -62,7 +68,7 @@ def normalize_input(input, identifier):
                      and r['tags']['VmProvider'] == 'GCE'):
                     
                     normalized_output.append(r['tags']['InstanceId'])
-                    # TODO: store instanceId + hostname for labeling later
+                    AGENT_CACHE[r['tags']['InstanceId']] = 'gcp' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
 
                 elif ('tags' in r.keys() 
                       and 'VmProvider' in r['tags'].keys() 
@@ -70,6 +76,7 @@ def normalize_input(input, identifier):
 
                     if 'InstanceId' in r['tags'].keys(): # EC2 use case - InstanceId is in URN
                         normalized_output.append(r['tags']['InstanceId'])
+                        AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
                     else: # Fargate use case 
                         normalized_output.append(r['tags']['Hostname'])
                 else:
@@ -103,6 +110,23 @@ def get_urn_from_instanceid(instanceId):
         raise Exception (f"Input instanceId {instanceId} not found in cache!")
 
 
+def retrieve_all_data_results(generator):
+
+    results = list()
+    count = 0
+    page = next(generator,None)
+
+    while page is not None:
+        for record in page['data']:
+            results.append(record)
+            count += 1
+        logger.debug(f"Running count: {count}")
+        page = next(generator,None)
+
+    # patching the data structure to avoid downstream manipulation atm
+    resultset = {'data':results}
+    return resultset
+
 def main(args):
 
     if not args.profile and not args.account and not args.subaccount and not args.api_key and not args.api_secret:
@@ -128,17 +152,23 @@ def main(args):
     start_time = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     end_time = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
 
+    ########
+    # Agents
+    ########
     all_agent_instances = client.agent_info.search(json={
             'timeFilter': { 
                 'startTime' : start_time, 
                 'endTime'   : end_time
             } 
         })
-    list_agent_instances = normalize_input(list(all_agent_instances), 'agent')
+    list_agent_instances = normalize_input(retrieve_all_data_results(all_agent_instances), 'agent')
     if check_truncation(list_agent_instances):
         logger.warning(f'WARNING: Agent Instances truncated at {MAX_RESULT_SET} records')
     logger.debug(f'Agent Instances: {list_agent_instances}\n')
 
+    ######
+    # GCP
+    ######
     gcp_inventory = client.inventory.search(json={
             'timeFilter': { 
                 'startTime' : start_time, 
@@ -149,13 +179,16 @@ def main(args):
             ],
             'dataset': 'GcpCompliance'
         })
-    GCP_INVENTORY_CACHE = list(gcp_inventory)
+    GCP_INVENTORY_CACHE = retrieve_all_data_results(gcp_inventory)
     list_gcp_instances = normalize_input(GCP_INVENTORY_CACHE, 'Gcp')
     if check_truncation(list_gcp_instances):
         logger.warning(f'WARNING: GCP Instances truncated at {MAX_RESULT_SET} records')
     logger.debug(f'GCP Instances: {list_gcp_instances}\n')
 
 
+    ######
+    # AWS
+    ######
     aws_inventory = client.inventory.search(json={
             'timeFilter': { 
                 'startTime' : start_time, 
@@ -166,11 +199,15 @@ def main(args):
             ],
             'dataset': 'AwsCompliance'
         })
-    list_aws_instances = normalize_input(list(aws_inventory), 'Aws')
+    list_aws_instances = normalize_input(retrieve_all_data_results(aws_inventory), 'Aws')
     if check_truncation(list_aws_instances):
         logger.warning(f'WARNING: AWS Instances truncated at {MAX_RESULT_SET} records')
     logger.debug(f'AWS Instances: {list_aws_instances}\n')
 
+
+    #########
+    # Set Ops
+    #########
     all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances)
 
     instances_without_agents = list()
@@ -187,6 +224,9 @@ def main(args):
     agents_without_inventory = list()
     for instance in list_agent_instances:
         if not any(instance in instance_urn for instance_urn in matched_instances):
+            if instance in AGENT_CACHE:
+                # pull out host name if we have it
+                instance = AGENT_CACHE[instance]
             agents_without_inventory.append(instance)
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)

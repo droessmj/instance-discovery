@@ -18,9 +18,9 @@ AGENT_CACHE = {}
 
 class InstanceResult():
     def __init__(self, instances_without_agents, instances_with_agents, agents_without_inventory) -> None:
-        self.instances_without_agents = list(instances_without_agents)
-        self.instances_with_agents = list(instances_with_agents)
-        self.agents_without_inventory = list(agents_without_inventory)
+        self.instances_without_agents = instances_without_agents
+        self.instances_with_agents = instances_with_agents
+        self.agents_without_inventory = agents_without_inventory
 
         self.instances_without_agents.sort()
         self.instances_with_agents.sort()
@@ -235,15 +235,15 @@ def main(args):
     if args.kubernetes_info:
         for k in AWS_INVENTORY_CACHE.keys():
             if AWS_INVENTORY_CACHE[k][1] == True:
-                k8s_filter_list.append(AWS_INVENTORY_CACHE[k][0])
+                k8s_filter_list.append(k)
 
         for k in GCP_INVENTORY_CACHE.keys():
             if GCP_INVENTORY_CACHE[k][1] == True:
-                k8s_filter_list.append(GCP_INVENTORY_CACHE[k][0])
+                k8s_filter_list.append(k)
 
         for k in AZURE_INVENTORY_CACHE.keys():
             if AZURE_INVENTORY_CACHE[k][1] == True:
-                k8s_filter_list.append(AZURE_INVENTORY_CACHE[k][0])
+                k8s_filter_list.append(k)
         
         logger.debug(f'List of k8s instances: {k8s_filter_list}')
 
@@ -254,6 +254,7 @@ def main(args):
     all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances)
     if args.kubernetes_info:
         all_instances_inventory = [i for i in all_instances_inventory if i in k8s_filter_list]
+        logger.debug(f'All_instances_inventory {all_instances_inventory}')
 
     instances_without_agents = list()
     matched_instances = list()
@@ -280,6 +281,10 @@ def main(args):
                     instance = AGENT_CACHE[instance]
                 agents_without_inventory.append(instance)
 
+
+    logger.debug(f'Instances_without_agents:{instances_without_agents}')
+    logger.debug(f'Matched_Instances:{matched_instances}')
+    logger.debug(f'Agents_without_inventory:{agents_without_inventory}')
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.json:

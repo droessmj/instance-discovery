@@ -84,12 +84,11 @@ def normalize_input(input, identifier):
 
             elif identifier == 'Aws':
                 normalized_output.append(r['resourceConfig']['InstanceId'])
-                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = r['urn']
+                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier))
 
             elif identifier == 'Gcp':
-                # TODO: #1 InstanceId tag == "Id" for GCP Resource Inventory
                 normalized_output.append(r['resourceConfig']['id'])
-                GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = r['urn']
+                GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier))
 
             else:
                 raise Exception (f'Error normalizing data set inputs! input: {input}, identifier: {identifier}')
@@ -97,6 +96,28 @@ def normalize_input(input, identifier):
         raise Exception (f'Empty input passed to normalize!')
 
     return normalized_output
+
+
+def is_kubernetes(resource, identifier):
+    if identifier == "Aws":
+        if 'Tags' in resource['resourceConfig']:
+            for t in resource['resourceConfig']['Tags']:
+                if t['Key'] == 'eks:cluster-name':
+                    return True
+        pass
+    elif identifier == "Gcp":
+        if 'labels' in resource['resourceConfig']:
+            for l in resource['resourceConfig']['labels']:
+                if 'goog-gke-node' in l:
+                    print(resource['resourceConfig']['id'])
+                    return True
+        pass
+    elif identifier == "Azure":
+        pass
+    else:
+        raise Exception("Identifer not correctly passed to is_kubernetes!")
+
+    return False
 
 
 def get_urn_from_instanceid(instanceId):
@@ -179,8 +200,8 @@ def main(args):
             ],
             'dataset': 'GcpCompliance'
         })
-    GCP_INVENTORY_CACHE = retrieve_all_data_results(gcp_inventory)
-    list_gcp_instances = normalize_input(GCP_INVENTORY_CACHE, 'Gcp')
+    gcp_data = retrieve_all_data_results(gcp_inventory)
+    list_gcp_instances = normalize_input(gcp_data, 'Gcp')
     if check_truncation(list_gcp_instances):
         logger.warning(f'WARNING: GCP Instances truncated at {MAX_RESULT_SET} records')
     logger.debug(f'GCP Instances: {list_gcp_instances}\n')
@@ -199,21 +220,46 @@ def main(args):
             ],
             'dataset': 'AwsCompliance'
         })
-    list_aws_instances = normalize_input(retrieve_all_data_results(aws_inventory), 'Aws')
+    aws_data = retrieve_all_data_results(aws_inventory)
+    list_aws_instances = normalize_input(aws_data, 'Aws')
     if check_truncation(list_aws_instances):
         logger.warning(f'WARNING: AWS Instances truncated at {MAX_RESULT_SET} records')
     logger.debug(f'AWS Instances: {list_aws_instances}\n')
+
+
+    ##################
+    # k8s filtering
+    ##################
+    # TODO: Improve application of filter instead of just emitting everything k8s
+    k8s_filter_list = list()
+    if args.kubernetes_info:
+        for k in AWS_INVENTORY_CACHE.keys():
+            if AWS_INVENTORY_CACHE[k][1] == True:
+                k8s_filter_list.append(AWS_INVENTORY_CACHE[k][0])
+
+        for k in GCP_INVENTORY_CACHE.keys():
+            if GCP_INVENTORY_CACHE[k][1] == True:
+                k8s_filter_list.append(GCP_INVENTORY_CACHE[k][0])
+
+        for k in AZURE_INVENTORY_CACHE.keys():
+            if AZURE_INVENTORY_CACHE[k][1] == True:
+                k8s_filter_list.append(AZURE_INVENTORY_CACHE[k][0])
+        
+        logger.debug(f'List of k8s instances: {k8s_filter_list}')
 
 
     #########
     # Set Ops
     #########
     all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances)
+    if args.kubernetes_info:
+        all_instances_inventory = [i for i in all_instances_inventory if i in k8s_filter_list]
 
     instances_without_agents = list()
     matched_instances = list()
+
     for instance_id in all_instances_inventory:
-        normalized_urn = get_urn_from_instanceid(instance_id)
+        normalized_urn = get_urn_from_instanceid(instance_id)[0]
         if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
             instances_without_agents.append(normalized_urn)
 
@@ -222,12 +268,18 @@ def main(args):
             matched_instances.append(normalized_urn)
 
     agents_without_inventory = list()
-    for instance in list_agent_instances:
-        if not any(instance in instance_urn for instance_urn in matched_instances):
-            if instance in AGENT_CACHE:
-                # pull out host name if we have it
-                instance = AGENT_CACHE[instance]
-            agents_without_inventory.append(instance)
+
+    # if we're doing k8s only, we need a separate check for this 
+    # and atm it's currently low value add so we're going to implement this
+    # later in time and track as a todo for the moment
+    if not args.kubernetes_info:
+        for instance in list_agent_instances:
+            if not any(instance in instance_urn for instance_urn in matched_instances):
+                if instance in AGENT_CACHE:
+                    # pull out host name if we have it
+                    instance = AGENT_CACHE[instance]
+                agents_without_inventory.append(instance)
+
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.json:
@@ -272,6 +324,12 @@ if __name__ == '__main__':
         default=False,
         action='store_true',
         help='Emit results as json for machine processing'
+    )
+    parser.add_argument(
+        '-k','--kubernetes-info',
+        default=False,
+        action='store_true',
+        help='Emit results for instances identified as Kubernetes nodes'
     )
     parser.add_argument(
         '--debug',

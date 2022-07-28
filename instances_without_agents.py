@@ -14,6 +14,7 @@ GCP_INVENTORY_CACHE = {}
 AWS_INVENTORY_CACHE = {}
 AZURE_INVENTORY_CACHE = {}
 AGENT_CACHE = {}
+INSTANCE_CLUSTER_CACHE = {}
 
 
 class InstanceResult():
@@ -98,20 +99,19 @@ def normalize_input(input, identifier):
     return normalized_output
 
 
+# inspect resource to determine if it matches known identifiers marking it as a k8s node
 def is_kubernetes(resource, identifier):
     if identifier == "Aws":
         if 'Tags' in resource['resourceConfig']:
             for t in resource['resourceConfig']['Tags']:
                 if t['Key'] == 'eks:cluster-name':
+                    INSTANCE_CLUSTER_CACHE[resource['resourceConfig']['InstanceId']] = t['Value']
                     return True
-        pass
     elif identifier == "Gcp":
         if 'labels' in resource['resourceConfig']:
             for l in resource['resourceConfig']['labels']:
                 if 'goog-gke-node' in l:
-                    print(resource['resourceConfig']['id'])
                     return True
-        pass
     elif identifier == "Azure":
         pass
     else:
@@ -147,6 +147,7 @@ def retrieve_all_data_results(generator):
     # patching the data structure to avoid downstream manipulation atm
     resultset = {'data':results}
     return resultset
+
 
 def main(args):
 
@@ -230,7 +231,6 @@ def main(args):
     ##################
     # k8s filtering
     ##################
-    # TODO: Improve application of filter instead of just emitting everything k8s
     k8s_filter_list = list()
     if args.kubernetes_info:
         for k in AWS_INVENTORY_CACHE.keys():
@@ -280,7 +280,6 @@ def main(args):
                     # pull out host name if we have it
                     instance = AGENT_CACHE[instance]
                 agents_without_inventory.append(instance)
-
 
     logger.debug(f'Instances_without_agents:{instances_without_agents}')
     logger.debug(f'Matched_Instances:{matched_instances}')

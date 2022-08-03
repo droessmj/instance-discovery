@@ -261,6 +261,11 @@ def main(args):
 
     for instance_id in all_instances_inventory:
         normalized_urn = get_urn_from_instanceid(instance_id)[0]
+
+        # TODO: Fix this hacky formatting
+        if args.kubernetes_info:
+            normalized_urn = [normalized_urn, INSTANCE_CLUSTER_CACHE[instance_id]]
+
         if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
             instances_without_agents.append(normalized_urn)
 

@@ -27,10 +27,22 @@ class InstanceResult():
         self.instances_with_agents.sort()
         self.agents_without_inventory.sort()
 
-    def toJson(self):
-        return json.dumps(self.__dict__, indent=4, sort_keys=True)
+    def printJson(self):
+        print(json.dumps(self.__dict__, indent=4, sort_keys=True))
 
-    def standardPrint(self):
+    def printCsv(self):
+        # TOOD: Implement
+        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory")
+        for i in self.instances_without_agents:
+            print(f'{i},,true,,')
+
+        for i in self.instances_with_agents:
+            print(f'{i},,,true,')
+
+        for i in self.agents_without_inventory:
+            print(f'{i},,,,true')
+
+    def printStandard(self):
         if len(self.instances_without_agents) > 0:
             print(f'Instances without agent:')
             for instance in self.instances_without_agents:
@@ -299,9 +311,11 @@ def main(args):
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.json:
-        print(instance_result.toJson())
+        instance_result.printJson()
+    elif args.csv:
+        instance_result.printCsv()
     else:
-        instance_result.standardPrint()
+        instance_result.printStandard()
 
 
 if __name__ == '__main__':
@@ -340,6 +354,12 @@ if __name__ == '__main__':
         default=False,
         action='store_true',
         help='Emit results as json for machine processing'
+    )
+    parser.add_argument(
+        '--csv',
+        default=False,
+        action='store_true',
+        help='Emit results as csv'
     )
     parser.add_argument(
         '-c', '--creation-time',

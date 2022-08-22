@@ -85,11 +85,11 @@ def normalize_input(input, identifier):
 
             elif identifier == 'Aws':
                 normalized_output.append(r['resourceConfig']['InstanceId'])
-                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier))
+                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'])
 
             elif identifier == 'Gcp':
                 normalized_output.append(r['resourceConfig']['id'])
-                GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier))
+                GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['creationTimestamp'])
 
             else:
                 raise Exception (f'Error normalizing data set inputs! input: {input}, identifier: {identifier}')
@@ -111,6 +111,7 @@ def is_kubernetes(resource, identifier):
         if 'labels' in resource['resourceConfig']:
             for l in resource['resourceConfig']['labels']:
                 if 'goog-gke-node' in l:
+                    # TODO: INSTANCE_CLUSTER_CACHE
                     return True
     elif identifier == "Azure":
         pass
@@ -265,6 +266,12 @@ def main(args):
         # TODO: Fix this hacky formatting
         if args.kubernetes_info:
             normalized_urn = [normalized_urn, INSTANCE_CLUSTER_CACHE[instance_id]]
+       
+        # TODO: These should be composable 
+        if args.creation_time:
+            print("creation time retrieved!")
+            normalized_urn = [normalized_urn, get_urn_from_instanceid(instance_id)[2]]
+            print(normalized_urn)
 
         if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
             instances_without_agents.append(normalized_urn)
@@ -333,6 +340,12 @@ if __name__ == '__main__':
         default=False,
         action='store_true',
         help='Emit results as json for machine processing'
+    )
+    parser.add_argument(
+        '-c', '--creation-time',
+        default=False,
+        action='store_true',
+        help='Emit creation time for identified instances'
     )
     parser.add_argument(
         '-k','--kubernetes-info',

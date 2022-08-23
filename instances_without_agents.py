@@ -30,8 +30,8 @@ class InstanceResult():
     def printJson(self):
         print(json.dumps(self.__dict__, indent=4, sort_keys=True))
 
+    # TODO: pretty sure this is broken with kubernetes flag
     def printCsv(self):
-        # TOOD: Implement
         print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory")
         for i in self.instances_without_agents:
             print(f'{i},,true,,')
@@ -89,19 +89,35 @@ def normalize_input(input, identifier):
 
                     if 'InstanceId' in r['tags'].keys(): # EC2 use case - InstanceId is in URN
                         normalized_output.append(r['tags']['InstanceId'])
-                        AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
+                        if 'Account' in r['tags'].keys():
+                            AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
+                        else: # random Windows agent use case?
+                            AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
                     else: # Fargate use case 
                         normalized_output.append(r['tags']['Hostname'])
+
+                elif ('tags' in r.keys() 
+                      and 'VmProvider' in r['tags'].keys() 
+                      and r['tags']['VmProvider'] == 'Microsoft.Compute'):
+
+                    normalized_output.append(r['tags']['InstanceId'])
+                    if 'Account' in r['tags'].keys():
+                        AGENT_CACHE[r['tags']['InstanceId']] = 'azure' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
+                    else: # random Windows agent use case?
+                        AGENT_CACHE[r['tags']['InstanceId']] = 'azure' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
+
                 else:
                     normalized_output.append(r['hostname'])
 
             elif identifier == 'Aws':
                 normalized_output.append(r['resourceConfig']['InstanceId'])
                 AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'])
-
             elif identifier == 'Gcp':
                 normalized_output.append(r['resourceConfig']['id'])
                 GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['creationTimestamp'])
+            elif identifier == 'Azure':
+                normalized_output.append(r['resourceConfig']['vmId'])
+                AZURE_INVENTORY_CACHE[r['resourceConfig']['vmId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['timeCreated'])
 
             else:
                 raise Exception (f'Error normalizing data set inputs! input: {input}, identifier: {identifier}')
@@ -147,15 +163,9 @@ def get_urn_from_instanceid(instanceId):
 def retrieve_all_data_results(generator):
 
     results = list()
-    count = 0
-    page = next(generator,None)
-
-    while page is not None:
-        for record in page['data']:
+    for row in generator:
+        for record in row['data']:
             results.append(record)
-            count += 1
-        logger.debug(f"Running count: {count}")
-        page = next(generator,None)
 
     # patching the data structure to avoid downstream manipulation atm
     resultset = {'data':results}
@@ -166,6 +176,9 @@ def main(args):
 
     if not args.profile and not args.account and not args.subaccount and not args.api_key and not args.api_secret:
         args.profile = 'default'
+
+
+    # TODO: Implement input flag validations
 
     try:
         client = LaceworkClient(
@@ -212,7 +225,7 @@ def main(args):
             'filters': [
                 { 'field': 'resourceType', 'expression': 'eq', 'value':'compute.googleapis.com/Instance'}
             ],
-            'dataset': 'GcpCompliance'
+            'csp': 'GCP'
         })
     gcp_data = retrieve_all_data_results(gcp_inventory)
     list_gcp_instances = normalize_input(gcp_data, 'Gcp')
@@ -232,7 +245,7 @@ def main(args):
             'filters': [
                 { 'field': 'resourceType', 'expression': 'eq', 'value':'ec2:instance'}
             ],
-            'dataset': 'AwsCompliance'
+            'csp': 'AWS'
         })
     aws_data = retrieve_all_data_results(aws_inventory)
     list_aws_instances = normalize_input(aws_data, 'Aws')
@@ -240,6 +253,25 @@ def main(args):
         logger.warning(f'WARNING: AWS Instances truncated at {MAX_RESULT_SET} records')
     logger.debug(f'AWS Instances: {list_aws_instances}\n')
 
+    ######
+    # Azure
+    ######
+    # TODO: Get VMSS instances
+    azure_inventory = client.inventory.search(json={
+            'timeFilter': { 
+                'startTime' : start_time, 
+                'endTime'   : end_time
+            }, 
+            'filters': [
+                { 'field': 'resourceType', 'expression': 'eq', 'value':'microsoft.compute/virtualmachines'}
+            ],
+            'csp': 'Azure'
+        })
+    azure_data = retrieve_all_data_results(azure_inventory)
+    list_azure_instances = normalize_input(azure_data, 'Azure')
+    if check_truncation(list_azure_instances):
+        logger.warning(f'WARNING: Azure Instances truncated at {MAX_RESULT_SET} records')
+    logger.debug(f'Azure Instances: {list_azure_instances}\n')
 
     ##################
     # k8s filtering
@@ -264,7 +296,7 @@ def main(args):
     #########
     # Set Ops
     #########
-    all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances)
+    all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances) | set(list_azure_instances)
     if args.kubernetes_info:
         all_instances_inventory = [i for i in all_instances_inventory if i in k8s_filter_list]
         logger.debug(f'All_instances_inventory {all_instances_inventory}')
@@ -279,7 +311,7 @@ def main(args):
         if args.kubernetes_info:
             normalized_urn = [normalized_urn, INSTANCE_CLUSTER_CACHE[instance_id]]
        
-        # TODO: These should be composable 
+        # TODO: These should be composable  ^^^^
         if args.creation_time:
             print("creation time retrieved!")
             normalized_urn = [normalized_urn, get_urn_from_instanceid(instance_id)[2]]

@@ -16,6 +16,23 @@ AZURE_INVENTORY_CACHE = {}
 AGENT_CACHE = {}
 INSTANCE_CLUSTER_CACHE = {}
 
+class OutputRecord():
+    def __init__(self, urn, creation_time, is_kubernetes, subaccount):
+        self.urn = urn
+        self.creation_time = creation_time
+        self.is_kubernetes = is_kubernetes
+        self.subaccount = subaccount
+    
+    def __str__(self) -> str:
+        return json.dumps(self.__dict__, indent=4, sort_keys=True)
+
+    def __repr__(self) -> str:
+        return json.dumps(self.__dict__, indent=4, sort_keys=True)
+    
+    def __eq__(self, o: object) -> bool:
+        return self.urn == o.urn
+    
+
 
 class InstanceResult():
     def __init__(self, instances_without_agents, instances_with_agents, agents_without_inventory) -> None:
@@ -23,9 +40,9 @@ class InstanceResult():
         self.instances_with_agents = instances_with_agents
         self.agents_without_inventory = agents_without_inventory
 
-        self.instances_without_agents.sort()
-        self.instances_with_agents.sort()
-        self.agents_without_inventory.sort()
+        self.instances_without_agents.sort(key=lambda x: x.urn)
+        self.instances_with_agents.sort(key=lambda x: x.urn)
+        self.agents_without_inventory.sort(key=lambda x: x.urn)
 
     def printJson(self):
         print(json.dumps(self.__dict__, indent=4, sort_keys=True))
@@ -61,6 +78,9 @@ class InstanceResult():
                 print(f'\t{instance}')
             print('\n')
 
+
+def get_all_tenant_subaccounts(client):
+    return [i['accountName'] for i in client.user_profile.get()['data'][0]['accounts']]
 
 def check_truncation(results):
     if type(results) == list:
@@ -274,48 +294,20 @@ def main(args):
     logger.debug(f'Azure Instances: {list_azure_instances}\n')
 
     ##################
-    # k8s filtering
-    ##################
-    k8s_filter_list = list()
-    if args.kubernetes_info:
-        for k in AWS_INVENTORY_CACHE.keys():
-            if AWS_INVENTORY_CACHE[k][1] == True:
-                k8s_filter_list.append(k)
-
-        for k in GCP_INVENTORY_CACHE.keys():
-            if GCP_INVENTORY_CACHE[k][1] == True:
-                k8s_filter_list.append(k)
-
-        for k in AZURE_INVENTORY_CACHE.keys():
-            if AZURE_INVENTORY_CACHE[k][1] == True:
-                k8s_filter_list.append(k)
-        
-        logger.debug(f'List of k8s instances: {k8s_filter_list}')
-
 
     #########
     # Set Ops
     #########
     all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances) | set(list_azure_instances)
-    if args.kubernetes_info:
-        all_instances_inventory = [i for i in all_instances_inventory if i in k8s_filter_list]
-        logger.debug(f'All_instances_inventory {all_instances_inventory}')
 
     instances_without_agents = list()
     matched_instances = list()
 
     for instance_id in all_instances_inventory:
-        normalized_urn = get_urn_from_instanceid(instance_id)[0]
 
-        # TODO: Fix this hacky formatting
-        if args.kubernetes_info:
-            normalized_urn = [normalized_urn, INSTANCE_CLUSTER_CACHE[instance_id]]
-       
-        # TODO: These should be composable  ^^^^
-        if args.creation_time:
-            print("creation time retrieved!")
-            normalized_urn = [normalized_urn, get_urn_from_instanceid(instance_id)[2]]
-            print(normalized_urn)
+        urn_result = get_urn_from_instanceid(instance_id)
+        is_kubernetes = INSTANCE_CLUSTER_CACHE[instance_id] if instance_id in INSTANCE_CLUSTER_CACHE else False
+        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, "TODO-INFER-SUB-ACCOUNT")
 
         if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
             instances_without_agents.append(normalized_urn)
@@ -326,16 +318,13 @@ def main(args):
 
     agents_without_inventory = list()
 
-    # if we're doing k8s only, we need a separate check for this 
-    # and atm it's currently low value add so we're going to implement this
-    # later in time and track as a todo for the moment
-    if not args.kubernetes_info:
-        for instance in list_agent_instances:
-            if not any(instance in instance_urn for instance_urn in matched_instances):
-                if instance in AGENT_CACHE:
-                    # pull out host name if we have it
-                    instance = AGENT_CACHE[instance]
-                agents_without_inventory.append(instance)
+    for instance in list_agent_instances:
+        if not any(instance in instance_urn for instance_urn in matched_instances):
+            if instance in AGENT_CACHE:
+                # pull out host name if we have it
+                instance = AGENT_CACHE[instance]
+            o = OutputRecord(instance,'','',"TODO")
+            agents_without_inventory.append(o)
 
     logger.debug(f'Instances_without_agents:{instances_without_agents}')
     logger.debug(f'Matched_Instances:{matched_instances}')
@@ -392,18 +381,6 @@ if __name__ == '__main__':
         default=False,
         action='store_true',
         help='Emit results as csv'
-    )
-    parser.add_argument(
-        '-c', '--creation-time',
-        default=False,
-        action='store_true',
-        help='Emit creation time for identified instances'
-    )
-    parser.add_argument(
-        '-k','--kubernetes-info',
-        default=False,
-        action='store_true',
-        help='Emit results for instances identified as Kubernetes nodes'
     )
     parser.add_argument(
         '--debug',

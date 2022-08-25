@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from pickle import NONE
+from pydoc import cli
 import re
 from xml.dom.minidom import Identified
 from laceworksdk import LaceworkClient
@@ -31,8 +32,10 @@ class OutputRecord():
     
     def __eq__(self, o: object) -> bool:
         return self.urn == o.urn
-    
 
+def serialize(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    return obj.__dict__
 
 class InstanceResult():
     def __init__(self, instances_without_agents, instances_with_agents, agents_without_inventory) -> None:
@@ -45,19 +48,19 @@ class InstanceResult():
         self.agents_without_inventory.sort(key=lambda x: x.urn)
 
     def printJson(self):
-        print(json.dumps(self.__dict__, indent=4, sort_keys=True))
+        print(json.dumps(self.__dict__, indent=4, sort_keys=True, default=serialize))
 
     # TODO: pretty sure this is broken with kubernetes flag
     def printCsv(self):
-        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory")
+        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Subaccount")
         for i in self.instances_without_agents:
-            print(f'{i},,true,,')
+            print(f'{i.urn},{i.creation_time},true,,,{i.subaccount}')
 
         for i in self.instances_with_agents:
-            print(f'{i},,,true,')
+            print(f'{i.urn},{i.creation_time},,true,,{i.subaccount}')
 
         for i in self.agents_without_inventory:
-            print(f'{i},,,,true')
+            print(f'{i.urn},{i.creation_time},,,true,{i.subaccount}')
 
     def printStandard(self):
         if len(self.instances_without_agents) > 0:
@@ -220,6 +223,12 @@ def main(args):
     start_time = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     end_time = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
 
+    # magic to get the current subaccount for reporting on where things are
+    lw_subaccount = client.account._session.__dict__['_subaccount'] 
+    if lw_subaccount == None:
+        # very hacky pull of the subdomain off the base_url
+        lw_subaccount = client.account._session.__dict__['_base_url'].split('.')[0].split(':')[1][2::]
+
     ########
     # Agents
     ########
@@ -307,7 +316,7 @@ def main(args):
 
         urn_result = get_urn_from_instanceid(instance_id)
         is_kubernetes = INSTANCE_CLUSTER_CACHE[instance_id] if instance_id in INSTANCE_CLUSTER_CACHE else False
-        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, "TODO-INFER-SUB-ACCOUNT")
+        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, lw_subaccount)
 
         if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
             instances_without_agents.append(normalized_urn)
@@ -319,11 +328,11 @@ def main(args):
     agents_without_inventory = list()
 
     for instance in list_agent_instances:
-        if not any(instance in instance_urn for instance_urn in matched_instances):
+        if not any(instance in instance_urn.urn for instance_urn in matched_instances):
             if instance in AGENT_CACHE:
                 # pull out host name if we have it
                 instance = AGENT_CACHE[instance]
-            o = OutputRecord(instance,'','',"TODO")
+            o = OutputRecord(instance,'','',lw_subaccount)
             agents_without_inventory.append(o)
 
     logger.debug(f'Instances_without_agents:{instances_without_agents}')

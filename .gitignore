@@ -16,6 +16,8 @@ env/
 .pytest_cache/
 example.py
 cache/**/*
+*.json
+*.csv
 
 # Byte-compiled / optimized files
 *.py[cod]

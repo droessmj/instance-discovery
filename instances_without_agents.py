@@ -66,19 +66,19 @@ class InstanceResult():
         if len(self.instances_without_agents) > 0:
             print(f'Instances without agent:')
             for instance in self.instances_without_agents:
-                print(f'\t{instance}')
+                print(f'\t{instance.urn}')
             print('\n')
 
         if len(self.instances_with_agents) > 0:
             print(f'Instances reconciled with agent:')
             for instance in self.instances_with_agents:
-                print(f'\t{instance}')
+                print(f'\t{instance.urn}')
             print('\n')
 
         if len(self.agents_without_inventory) > 0:
             print(f'Agents without corresponding inventory:')
             for instance in self.agents_without_inventory:
-                print(f'\t{instance}')
+                print(f'\t{instance.urn}')
             print('\n')
 
 

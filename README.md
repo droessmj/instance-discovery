@@ -34,9 +34,7 @@ Note: As we don't currently inventory Fargate tasks, these will always show as "
 |       | `--subaccount`                    | `None`  | The Lacework sub-account to use                                                                                                                                                  |
 |       | `--api-key`                       | `None`  | The Lacework API key to use                                                                                                                                                  |
 |       | `--api-secret`                    | `None`  | The Lacework API secret to use                                                                                                                                                  |
-| `-k`  | `--kubernetes`                    | `False`  | Show only instances identified as Kubernetes nodes                                                                                                                                                  |
-| `-c`  | `--creation-time`                 | `False`  | Show creation timestamps on instances
-|       | `--csv`                               | `False`  | Enable csv output |
 | `-p`  | `--profile`                       | `None`  | The Lacework CLI profile to use                                                                                                                                                  |
+|       | `--csv`                               | `False`  | Enable csv output |
 |       | `--json`                          | `False` | Enable json output      
 |       | `--debug`                         | `False` | Enable debug logging                                                                         |

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from pickle import NONE
+from pydoc import cli
 import re
 from xml.dom.minidom import Identified
 from laceworksdk import LaceworkClient
@@ -16,6 +17,25 @@ AZURE_INVENTORY_CACHE = {}
 AGENT_CACHE = {}
 INSTANCE_CLUSTER_CACHE = {}
 
+class OutputRecord():
+    def __init__(self, urn, creation_time, is_kubernetes, subaccount):
+        self.urn = urn
+        self.creation_time = creation_time
+        self.is_kubernetes = is_kubernetes
+        self.subaccount = subaccount
+    
+    def __str__(self) -> str:
+        return json.dumps(self.__dict__, indent=4, sort_keys=True)
+
+    def __repr__(self) -> str:
+        return json.dumps(self.__dict__, indent=4, sort_keys=True)
+    
+    def __eq__(self, o: object) -> bool:
+        return self.urn == o.urn
+
+def serialize(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    return obj.__dict__
 
 class InstanceResult():
     def __init__(self, instances_without_agents, instances_with_agents, agents_without_inventory) -> None:
@@ -23,44 +43,47 @@ class InstanceResult():
         self.instances_with_agents = instances_with_agents
         self.agents_without_inventory = agents_without_inventory
 
-        self.instances_without_agents.sort()
-        self.instances_with_agents.sort()
-        self.agents_without_inventory.sort()
+        self.instances_without_agents.sort(key=lambda x: x.urn)
+        self.instances_with_agents.sort(key=lambda x: x.urn)
+        self.agents_without_inventory.sort(key=lambda x: x.urn)
 
     def printJson(self):
-        print(json.dumps(self.__dict__, indent=4, sort_keys=True))
+        print(json.dumps(self.__dict__, indent=4, sort_keys=True, default=serialize))
 
+    # TODO: pretty sure this is broken with kubernetes flag
     def printCsv(self):
-        # TOOD: Implement
-        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory")
+        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Subaccount")
         for i in self.instances_without_agents:
-            print(f'{i},,true,,')
+            print(f'{i.urn},{i.creation_time},true,,,{i.subaccount}')
 
         for i in self.instances_with_agents:
-            print(f'{i},,,true,')
+            print(f'{i.urn},{i.creation_time},,true,,{i.subaccount}')
 
         for i in self.agents_without_inventory:
-            print(f'{i},,,,true')
+            print(f'{i.urn},{i.creation_time},,,true,{i.subaccount}')
 
     def printStandard(self):
         if len(self.instances_without_agents) > 0:
             print(f'Instances without agent:')
             for instance in self.instances_without_agents:
-                print(f'\t{instance}')
+                print(f'\t{instance.urn}')
             print('\n')
 
         if len(self.instances_with_agents) > 0:
             print(f'Instances reconciled with agent:')
             for instance in self.instances_with_agents:
-                print(f'\t{instance}')
+                print(f'\t{instance.urn}')
             print('\n')
 
         if len(self.agents_without_inventory) > 0:
             print(f'Agents without corresponding inventory:')
             for instance in self.agents_without_inventory:
-                print(f'\t{instance}')
+                print(f'\t{instance.urn}')
             print('\n')
 
+
+def get_all_tenant_subaccounts(client):
+    return [i['accountName'] for i in client.user_profile.get()['data'][0]['accounts']]
 
 def check_truncation(results):
     if type(results) == list:
@@ -89,19 +112,35 @@ def normalize_input(input, identifier):
 
                     if 'InstanceId' in r['tags'].keys(): # EC2 use case - InstanceId is in URN
                         normalized_output.append(r['tags']['InstanceId'])
-                        AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
+                        if 'Account' in r['tags'].keys():
+                            AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
+                        else: # random Windows agent use case?
+                            AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
                     else: # Fargate use case 
                         normalized_output.append(r['tags']['Hostname'])
+
+                elif ('tags' in r.keys() 
+                      and 'VmProvider' in r['tags'].keys() 
+                      and r['tags']['VmProvider'] == 'Microsoft.Compute'):
+
+                    normalized_output.append(r['tags']['InstanceId'])
+                    if 'Account' in r['tags'].keys():
+                        AGENT_CACHE[r['tags']['InstanceId']] = 'azure' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
+                    else: # random Windows agent use case?
+                        AGENT_CACHE[r['tags']['InstanceId']] = 'azure' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
+
                 else:
                     normalized_output.append(r['hostname'])
 
             elif identifier == 'Aws':
                 normalized_output.append(r['resourceConfig']['InstanceId'])
                 AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'])
-
             elif identifier == 'Gcp':
                 normalized_output.append(r['resourceConfig']['id'])
                 GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['creationTimestamp'])
+            elif identifier == 'Azure':
+                normalized_output.append(r['resourceConfig']['vmId'])
+                AZURE_INVENTORY_CACHE[r['resourceConfig']['vmId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['timeCreated'])
 
             else:
                 raise Exception (f'Error normalizing data set inputs! input: {input}, identifier: {identifier}')
@@ -147,15 +186,9 @@ def get_urn_from_instanceid(instanceId):
 def retrieve_all_data_results(generator):
 
     results = list()
-    count = 0
-    page = next(generator,None)
-
-    while page is not None:
-        for record in page['data']:
+    for row in generator:
+        for record in row['data']:
             results.append(record)
-            count += 1
-        logger.debug(f"Running count: {count}")
-        page = next(generator,None)
 
     # patching the data structure to avoid downstream manipulation atm
     resultset = {'data':results}
@@ -166,6 +199,9 @@ def main(args):
 
     if not args.profile and not args.account and not args.subaccount and not args.api_key and not args.api_secret:
         args.profile = 'default'
+
+
+    # TODO: Implement input flag validations
 
     try:
         client = LaceworkClient(
@@ -186,6 +222,12 @@ def main(args):
     start_time = current_time - timedelta(days=LOOKBACK_DAYS)
     start_time = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     end_time = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    # magic to get the current subaccount for reporting on where things are
+    lw_subaccount = client.account._session.__dict__['_subaccount'] 
+    if lw_subaccount == None:
+        # very hacky pull of the subdomain off the base_url
+        lw_subaccount = client.account._session.__dict__['_base_url'].split('.')[0].split(':')[1][2::]
 
     ########
     # Agents
@@ -212,7 +254,7 @@ def main(args):
             'filters': [
                 { 'field': 'resourceType', 'expression': 'eq', 'value':'compute.googleapis.com/Instance'}
             ],
-            'dataset': 'GcpCompliance'
+            'csp': 'GCP'
         })
     gcp_data = retrieve_all_data_results(gcp_inventory)
     list_gcp_instances = normalize_input(gcp_data, 'Gcp')
@@ -232,7 +274,7 @@ def main(args):
             'filters': [
                 { 'field': 'resourceType', 'expression': 'eq', 'value':'ec2:instance'}
             ],
-            'dataset': 'AwsCompliance'
+            'csp': 'AWS'
         })
     aws_data = retrieve_all_data_results(aws_inventory)
     list_aws_instances = normalize_input(aws_data, 'Aws')
@@ -240,50 +282,41 @@ def main(args):
         logger.warning(f'WARNING: AWS Instances truncated at {MAX_RESULT_SET} records')
     logger.debug(f'AWS Instances: {list_aws_instances}\n')
 
+    ######
+    # Azure
+    ######
+    # TODO: Get VMSS instances
+    azure_inventory = client.inventory.search(json={
+            'timeFilter': { 
+                'startTime' : start_time, 
+                'endTime'   : end_time
+            }, 
+            'filters': [
+                { 'field': 'resourceType', 'expression': 'eq', 'value':'microsoft.compute/virtualmachines'}
+            ],
+            'csp': 'Azure'
+        })
+    azure_data = retrieve_all_data_results(azure_inventory)
+    list_azure_instances = normalize_input(azure_data, 'Azure')
+    if check_truncation(list_azure_instances):
+        logger.warning(f'WARNING: Azure Instances truncated at {MAX_RESULT_SET} records')
+    logger.debug(f'Azure Instances: {list_azure_instances}\n')
 
     ##################
-    # k8s filtering
-    ##################
-    k8s_filter_list = list()
-    if args.kubernetes_info:
-        for k in AWS_INVENTORY_CACHE.keys():
-            if AWS_INVENTORY_CACHE[k][1] == True:
-                k8s_filter_list.append(k)
-
-        for k in GCP_INVENTORY_CACHE.keys():
-            if GCP_INVENTORY_CACHE[k][1] == True:
-                k8s_filter_list.append(k)
-
-        for k in AZURE_INVENTORY_CACHE.keys():
-            if AZURE_INVENTORY_CACHE[k][1] == True:
-                k8s_filter_list.append(k)
-        
-        logger.debug(f'List of k8s instances: {k8s_filter_list}')
-
 
     #########
     # Set Ops
     #########
-    all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances)
-    if args.kubernetes_info:
-        all_instances_inventory = [i for i in all_instances_inventory if i in k8s_filter_list]
-        logger.debug(f'All_instances_inventory {all_instances_inventory}')
+    all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances) | set(list_azure_instances)
 
     instances_without_agents = list()
     matched_instances = list()
 
     for instance_id in all_instances_inventory:
-        normalized_urn = get_urn_from_instanceid(instance_id)[0]
 
-        # TODO: Fix this hacky formatting
-        if args.kubernetes_info:
-            normalized_urn = [normalized_urn, INSTANCE_CLUSTER_CACHE[instance_id]]
-       
-        # TODO: These should be composable 
-        if args.creation_time:
-            print("creation time retrieved!")
-            normalized_urn = [normalized_urn, get_urn_from_instanceid(instance_id)[2]]
-            print(normalized_urn)
+        urn_result = get_urn_from_instanceid(instance_id)
+        is_kubernetes = INSTANCE_CLUSTER_CACHE[instance_id] if instance_id in INSTANCE_CLUSTER_CACHE else False
+        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, lw_subaccount)
 
         if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
             instances_without_agents.append(normalized_urn)
@@ -294,16 +327,13 @@ def main(args):
 
     agents_without_inventory = list()
 
-    # if we're doing k8s only, we need a separate check for this 
-    # and atm it's currently low value add so we're going to implement this
-    # later in time and track as a todo for the moment
-    if not args.kubernetes_info:
-        for instance in list_agent_instances:
-            if not any(instance in instance_urn for instance_urn in matched_instances):
-                if instance in AGENT_CACHE:
-                    # pull out host name if we have it
-                    instance = AGENT_CACHE[instance]
-                agents_without_inventory.append(instance)
+    for instance in list_agent_instances:
+        if not any(instance in instance_urn.urn for instance_urn in matched_instances):
+            if instance in AGENT_CACHE:
+                # pull out host name if we have it
+                instance = AGENT_CACHE[instance]
+            o = OutputRecord(instance,'','',lw_subaccount)
+            agents_without_inventory.append(o)
 
     logger.debug(f'Instances_without_agents:{instances_without_agents}')
     logger.debug(f'Matched_Instances:{matched_instances}')
@@ -360,18 +390,6 @@ if __name__ == '__main__':
         default=False,
         action='store_true',
         help='Emit results as csv'
-    )
-    parser.add_argument(
-        '-c', '--creation-time',
-        default=False,
-        action='store_true',
-        help='Emit creation time for identified instances'
-    )
-    parser.add_argument(
-        '-k','--kubernetes-info',
-        default=False,
-        action='store_true',
-        help='Emit results for instances identified as Kubernetes nodes'
     )
     parser.add_argument(
         '--debug',

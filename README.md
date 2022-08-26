@@ -8,7 +8,7 @@ Supports GCP & AWS. Azure to follow shortly.
 
 ## How to Run
 
-`docker run -v ~/.lacework.toml:/home/user/.lacework.toml droessmj/instance-discovery --json`
+`docker run -v ~/.lacework.toml:/home/user/.lacework.toml droessmjlacework/instance-discovery --json`
 
 ``` python
 pip install -r requirements.txt

@@ -17,6 +17,7 @@ AZURE_INVENTORY_CACHE = {}
 AGENT_CACHE = {}
 INSTANCE_CLUSTER_CACHE = {}
 
+
 class OutputRecord():
     def __init__(self, urn, creation_time, is_kubernetes, subaccount):
         self.urn = urn
@@ -33,9 +34,6 @@ class OutputRecord():
     def __eq__(self, o: object) -> bool:
         return self.urn == o.urn
 
-def serialize(obj):
-    """JSON serializer for objects not serializable by default json code"""
-    return obj.__dict__
 
 class InstanceResult():
     def __init__(self, instances_without_agents, instances_with_agents, agents_without_inventory) -> None:
@@ -82,8 +80,14 @@ class InstanceResult():
             print('\n')
 
 
+def serialize(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    return obj.__dict__
+
+
 def get_all_tenant_subaccounts(client):
     return [i['accountName'] for i in client.user_profile.get()['data'][0]['accounts']]
+
 
 def check_truncation(results):
     if type(results) == list:
@@ -202,6 +206,16 @@ def main(args):
 
 
     # TODO: Implement input flag validations
+    if args.csv and args.json:
+        logger.error('Please specify only one of --csv or --json for output formatting')
+        exit(1)
+    elif args.profile and any([args.account, args.api_key, args.api_secret]):
+        logger.error('If passing a profile, other credential values should not be specified.')
+        exit(1)
+    elif not args.profile and not all([args.account, args.api_key, args.api_secret]):
+        logger.error('If passing credentials, please specify at least --account, --api-key, and --api-secret. --sub-account is optional for this input format.')
+        exit(1)
+
 
     try:
         client = LaceworkClient(

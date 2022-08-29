@@ -19,10 +19,11 @@ INSTANCE_CLUSTER_CACHE = {}
 
 
 class OutputRecord():
-    def __init__(self, urn, creation_time, is_kubernetes, subaccount):
+    def __init__(self, urn, creation_time, is_kubernetes, subaccount, os_image):
         self.urn = urn
         self.creation_time = creation_time
         self.is_kubernetes = is_kubernetes
+        self.os_image = os_image
         self.subaccount = subaccount
     
     def __str__(self) -> str:
@@ -48,17 +49,17 @@ class InstanceResult():
     def printJson(self):
         print(json.dumps(self.__dict__, indent=4, sort_keys=True, default=serialize))
 
-    # TODO: pretty sure this is broken with kubernetes flag
     def printCsv(self):
-        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Subaccount")
+        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Os_image,Subaccount")
         for i in self.instances_without_agents:
-            print(f'{i.urn},{i.creation_time},true,,,{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},true,,,{i.os_image},{i.subaccount}')
 
         for i in self.instances_with_agents:
-            print(f'{i.urn},{i.creation_time},,true,,{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},,true,,{i.os_image},{i.subaccount}')
 
         for i in self.agents_without_inventory:
-            print(f'{i.urn},{i.creation_time},,,true,{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},,,true,{i.os_image},{i.subaccount}')
+
 
     def printStandard(self):
         if len(self.instances_without_agents) > 0:
@@ -138,13 +139,34 @@ def normalize_input(input, identifier):
 
             elif identifier == 'Aws':
                 normalized_output.append(r['resourceConfig']['InstanceId'])
-                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'])
+                os_image = str()
+                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'], os_image)
             elif identifier == 'Gcp':
                 normalized_output.append(r['resourceConfig']['id'])
-                GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['creationTimestamp'])
+
+                # identify OS image from GCP instance
+                os_image = str()
+                try:
+                    count = 0
+                    for disk in r['resourceConfig']['disks']:
+                        if 'licenses' in disk.keys():
+                            os_image = r['resourceConfig']['disks'][count]['licenses']
+                            break
+                        elif 'initializeParams' in disk.keys():
+                            params = r['resourceConfig']['disks']['initializeParams'] 
+                            if 'sourceImage' in params:
+                                os_image = r['resourceConfig']['disks']['initializeParams']['sourceImage']
+                                break
+                        count += 1
+                except Exception as ex:
+                    print(ex)
+                    pass
+                
+                GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['creationTimestamp'], os_image)
             elif identifier == 'Azure':
                 normalized_output.append(r['resourceConfig']['vmId'])
-                AZURE_INVENTORY_CACHE[r['resourceConfig']['vmId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['timeCreated'])
+                os_image = str()
+                AZURE_INVENTORY_CACHE[r['resourceConfig']['vmId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['timeCreated'], os_image)
 
             else:
                 raise Exception (f'Error normalizing data set inputs! input: {input}, identifier: {identifier}')
@@ -330,7 +352,7 @@ def main(args):
 
         urn_result = get_urn_from_instanceid(instance_id)
         is_kubernetes = INSTANCE_CLUSTER_CACHE[instance_id] if instance_id in INSTANCE_CLUSTER_CACHE else False
-        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, lw_subaccount)
+        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, lw_subaccount, urn_result[3])
 
         if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
             instances_without_agents.append(normalized_urn)
@@ -346,7 +368,7 @@ def main(args):
             if instance in AGENT_CACHE:
                 # pull out host name if we have it
                 instance = AGENT_CACHE[instance]
-            o = OutputRecord(instance,'','',lw_subaccount)
+            o = OutputRecord(instance,'','',lw_subaccount,'')
             agents_without_inventory.append(o)
 
     logger.debug(f'Instances_without_agents:{instances_without_agents}')

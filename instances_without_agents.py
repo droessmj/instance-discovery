@@ -188,7 +188,6 @@ def get_fargate_with_lacework_agents(input):
             if 'containers' in task['resourceConfig']:
                 for container in task['resourceConfig']['containers']:
                     if 'datacollector' in container['image']:
-                        print(container['containerArn'])
                         tasks_with_agent.append(container['taskArn'])
                         task_placed = True
                         break
@@ -397,17 +396,10 @@ def main(args):
 
         if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
             instances_without_agents.append(normalized_urn)
-
             # TODO: add secondary check for "premptible instances"
         else:
             matched_instances.append(normalized_urn)
 
-    # if "arn:aws:ecs" in instance: 
-    #     # Fargate lookups
-    #     # TODO: there's something Fargate to be done here....
-    #     task_arn = instance[0:]
-    #     if task_arn in fargate_tasks_with_agent_set:
-    #         True
 
     agents_without_inventory = list()
 
@@ -425,8 +417,20 @@ def main(args):
     logger.debug(f'Matched_Instances:{matched_instances}')
     logger.debug(f'Agents_without_inventory:{agents_without_inventory}')
 
-    # Fargate complications
+
+    ##################################################
+    # Fargate complications -- Currently going to run this as a completely seperate filter
+    # and modify the three existing result sets independently
+
+    matched_fargate_instances = [task for task in fargate_tasks_with_agent if any(task in hostname.urn for hostname in agents_without_inventory)]
+    matched_instances = matched_instances.extend(matched_instances)
+    !!!!
+    # TODO -- there's some normalization to tackle yet here....need to trim a.urn down to match the Fargate provided notation
+    agents_without_inventory = [a for a in agents_without_inventory if a not in matched_fargate_instances]
+    !!!!
     instances_without_agents = instances_without_agents.extend(fargate_tasks_without_agent)
+    ##################################################
+
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.json:

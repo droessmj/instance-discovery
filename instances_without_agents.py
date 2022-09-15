@@ -52,13 +52,13 @@ class InstanceResult():
     def printCsv(self):
         print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Os_image,Subaccount")
         for i in self.instances_without_agents:
-            print(f'{i.urn},{i.creation_time},true,,,{i.os_image},{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},true,,,"{i.os_image}",{i.subaccount}')
 
         for i in self.instances_with_agents:
-            print(f'{i.urn},{i.creation_time},,true,,{i.os_image},{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},,true,,"{i.os_image}",{i.subaccount}')
 
         for i in self.agents_without_inventory:
-            print(f'{i.urn},{i.creation_time},,,true,{i.os_image},{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},,,true,"{i.os_image}",{i.subaccount}')
 
 
     def printStandard(self):
@@ -141,6 +141,8 @@ def normalize_input(input, identifier):
                 normalized_output.append(r['resourceConfig']['InstanceId'])
                 os_image = str()
                 AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'], os_image)
+
+
             elif identifier == 'Gcp':
                 normalized_output.append(r['resourceConfig']['id'])
 
@@ -174,6 +176,26 @@ def normalize_input(input, identifier):
         raise Exception (f'Empty input passed to normalize!')
 
     return normalized_output
+
+
+def get_fargate_with_lacework_agents(input):
+    tasks_with_agent = list()
+    tasks_without_agent = list()
+
+    for page in input:
+        for task in page['data']:
+            task_placed = False
+            if 'containers' in task['resourceConfig']:
+                for container in task['resourceConfig']['containers']:
+                    if 'datacollector' in container['image']:
+                        print(container['containerArn'])
+                        tasks_with_agent.append(container['taskArn'])
+                        task_placed = True
+                        break
+                if not task_placed:
+                    tasks_without_agent.append(task['urn'])
+                
+    return (tasks_with_agent, tasks_without_agent)
 
 
 # inspect resource to determine if it matches known identifiers marking it as a k8s node
@@ -302,6 +324,7 @@ def main(args):
     ######
     # AWS
     ######
+
     aws_inventory = client.inventory.search(json={
             'timeFilter': { 
                 'startTime' : start_time, 
@@ -340,6 +363,24 @@ def main(args):
 
     ##################
 
+    ##########
+    # Fargate is different
+    ##########
+    fargate_inventory = client.inventory.search(json={
+            'timeFilter': { 
+                'startTime' : start_time, 
+                'endTime'   : end_time
+            }, 
+            'filters': [
+                { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task'},
+                # { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task-definition'},
+                # { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:service'}
+            ],
+            'csp': 'AWS'
+        })
+    fargate_tasks_with_agent, fargate_tasks_without_agent = get_fargate_with_lacework_agents(fargate_inventory)
+    fargate_tasks_with_agent_set = set(fargate_tasks_with_agent)
+
     #########
     # Set Ops
     #########
@@ -361,10 +402,19 @@ def main(args):
         else:
             matched_instances.append(normalized_urn)
 
+    # if "arn:aws:ecs" in instance: 
+    #     # Fargate lookups
+    #     # TODO: there's something Fargate to be done here....
+    #     task_arn = instance[0:]
+    #     if task_arn in fargate_tasks_with_agent_set:
+    #         True
+
     agents_without_inventory = list()
 
     for instance in list_agent_instances:
         if not any(instance in instance_urn.urn for instance_urn in matched_instances):
+            # TODO: there's something Fargate to be done here....
+
             if instance in AGENT_CACHE:
                 # pull out host name if we have it
                 instance = AGENT_CACHE[instance]
@@ -374,6 +424,9 @@ def main(args):
     logger.debug(f'Instances_without_agents:{instances_without_agents}')
     logger.debug(f'Matched_Instances:{matched_instances}')
     logger.debug(f'Agents_without_inventory:{agents_without_inventory}')
+
+    # Fargate complications
+    instances_without_agents = instances_without_agents.extend(fargate_tasks_without_agent)
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.json:

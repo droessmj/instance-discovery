@@ -52,13 +52,13 @@ class InstanceResult():
     def printCsv(self):
         print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Os_image,Subaccount")
         for i in self.instances_without_agents:
-            print(f'{i.urn},{i.creation_time},true,,,{i.os_image},{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},true,,,"{i.os_image}",{i.subaccount}')
 
         for i in self.instances_with_agents:
-            print(f'{i.urn},{i.creation_time},,true,,{i.os_image},{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},,true,,"{i.os_image}",{i.subaccount}')
 
         for i in self.agents_without_inventory:
-            print(f'{i.urn},{i.creation_time},,,true,{i.os_image},{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},,,true,"{i.os_image}",{i.subaccount}')
 
 
     def printStandard(self):
@@ -141,6 +141,8 @@ def normalize_input(input, identifier):
                 normalized_output.append(r['resourceConfig']['InstanceId'])
                 os_image = str()
                 AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'], os_image)
+
+
             elif identifier == 'Gcp':
                 # wrapping in a try/execpt so that a single parsing failure doesn't take out the entire output
                 try:
@@ -178,6 +180,25 @@ def normalize_input(input, identifier):
         raise Exception (f'Empty input passed to normalize!')
 
     return normalized_output
+
+
+def get_fargate_with_lacework_agents(input):
+    tasks_with_agent = list()
+    tasks_without_agent = list()
+
+    for page in input:
+        for task in page['data']:
+            task_placed = False
+            if 'containers' in task['resourceConfig']:
+                for container in task['resourceConfig']['containers']:
+                    if 'datacollector' in container['image']:
+                        tasks_with_agent.append(container['taskArn'])
+                        task_placed = True
+                        break
+                if not task_placed:
+                    tasks_without_agent.append(task['urn'])
+                
+    return (tasks_with_agent, tasks_without_agent)
 
 
 # inspect resource to determine if it matches known identifiers marking it as a k8s node
@@ -223,6 +244,48 @@ def retrieve_all_data_results(generator):
     # patching the data structure to avoid downstream manipulation atm
     resultset = {'data':results}
     return resultset
+
+
+def apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory):
+
+    ##########
+    # Fargate is different
+    ##########
+    fargate_inventory = client.inventory.search(json={
+            'timeFilter': { 
+                'startTime' : start_time, 
+                'endTime'   : end_time
+            }, 
+            'filters': [
+                { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task'},
+                # { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task-definition'},
+                # { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:service'}
+            ],
+            'csp': 'AWS'
+        })
+    fargate_tasks_with_agent, fargate_tasks_without_agent = get_fargate_with_lacework_agents(fargate_inventory)
+
+    # Fargate complications -- Currently going to run this as a completely seperate filter
+    # and modify the three existing result sets independently
+
+    matched_fargate_instances = set([task for task in fargate_tasks_with_agent if any(task in hostname.urn for hostname in agents_without_inventory)])
+    matched_fargate_instance_output_records = [OutputRecord(t, '', False, '', '') for t in matched_fargate_instances]
+    matched_instances.extend(matched_fargate_instance_output_records)
+    logger.debug(f'matched faragate instances: {len(matched_instances)}')
+    logger.debug(f'missing fargate instances: {len(fargate_tasks_without_agent)}')
+
+    # The rfind is likely not comprehensive, but it nails it for the sample data
+    # so in the spirit of getting something out there...away we go
+    logger.debug(f'agents w/o inventory - pre: {len(agents_without_inventory)}')
+    agents_without_inventory = [a for a in agents_without_inventory if a.urn[0:a.urn.rfind('_')] not in matched_fargate_instances]
+    logger.debug(f'agents w/o inventory - post: {len(agents_without_inventory)}')
+
+    logger.debug(f'instances w/o agents - pre: {len(instances_without_agents)}')
+    fargate_instances_without_agent_records = [OutputRecord(t, '', False, '', '') for t in fargate_tasks_without_agent]
+    instances_without_agents.extend(fargate_instances_without_agent_records)
+    logger.debug(f'instances w/o agents - post: {len(instances_without_agents)}')
+
+    return (instances_without_agents, matched_instances, agents_without_inventory)
 
 
 def main(args):
@@ -306,6 +369,7 @@ def main(args):
     ######
     # AWS
     ######
+
     aws_inventory = client.inventory.search(json={
             'timeFilter': { 
                 'startTime' : start_time, 
@@ -344,6 +408,7 @@ def main(args):
 
     ##################
 
+
     #########
     # Set Ops
     #########
@@ -360,10 +425,10 @@ def main(args):
 
         if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
             instances_without_agents.append(normalized_urn)
-
             # TODO: add secondary check for "premptible instances"
         else:
             matched_instances.append(normalized_urn)
+
 
     agents_without_inventory = list()
 
@@ -378,6 +443,11 @@ def main(args):
     logger.debug(f'Instances_without_agents:{instances_without_agents}')
     logger.debug(f'Matched_Instances:{matched_instances}')
     logger.debug(f'Agents_without_inventory:{agents_without_inventory}')
+
+
+    # run the Fargate pass as a separate filter (for now)
+    instances_without_agents, matched_instances, agents_without_inventory = apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory)
+
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.json:

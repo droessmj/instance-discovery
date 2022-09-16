@@ -97,110 +97,6 @@ def check_truncation(results):
     return False
 
 
-def normalize_input(input, identifier):
-    normalized_output = list()
-    if len(input) > 0:
-        data = input['data']
-        for r in data:
-            # TODO: cleanup this mess....
-            if identifier == 'agent':
-                if ('tags' in r.keys() 
-                     and 'VmProvider' in r['tags'].keys() 
-                     and r['tags']['VmProvider'] == 'GCE'):
-                    
-                    normalized_output.append(r['tags']['InstanceId'])
-                    AGENT_CACHE[r['tags']['InstanceId']] = 'gcp' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
-
-                elif ('tags' in r.keys() 
-                      and 'VmProvider' in r['tags'].keys() 
-                      and r['tags']['VmProvider'] == 'AWS'):
-
-                    if 'InstanceId' in r['tags'].keys(): # EC2 use case - InstanceId is in URN
-                        normalized_output.append(r['tags']['InstanceId'])
-                        if 'Account' in r['tags'].keys():
-                            AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
-                        else: # random Windows agent use case?
-                            AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
-                    else: # Fargate use case 
-                        normalized_output.append(r['tags']['Hostname'])
-
-                elif ('tags' in r.keys() 
-                      and 'VmProvider' in r['tags'].keys() 
-                      and r['tags']['VmProvider'] == 'Microsoft.Compute'):
-
-                    normalized_output.append(r['tags']['InstanceId'])
-                    if 'Account' in r['tags'].keys():
-                        AGENT_CACHE[r['tags']['InstanceId']] = 'azure' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
-                    else: # random Windows agent use case?
-                        AGENT_CACHE[r['tags']['InstanceId']] = 'azure' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
-
-                else:
-                    normalized_output.append(r['hostname'])
-
-            elif identifier == 'Aws':
-                normalized_output.append(r['resourceConfig']['InstanceId'])
-                os_image = str()
-                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'], os_image)
-
-
-            elif identifier == 'Gcp':
-                # wrapping in a try/execpt so that a single parsing failure doesn't take out the entire output
-                try:
-                    normalized_output.append(r['resourceConfig']['id'])
-                    # identify OS image from GCP instance
-                    os_image = str()
-                    try:
-                        count = 0
-                        for disk in r['resourceConfig']['disks']:
-                            if 'licenses' in disk.keys():
-                                os_image = r['resourceConfig']['disks'][count]['licenses']
-                                break
-                            elif 'initializeParams' in disk.keys():
-                                params = r['resourceConfig']['disks']['initializeParams'] 
-                                if 'sourceImage' in params:
-                                    os_image = r['resourceConfig']['disks']['initializeParams']['sourceImage']
-                                    break
-                            count += 1
-                    except:
-                        logger.error('unable to parse os_image info for instance')
-
-                    GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['creationTimestamp'], os_image)
-                except Exception as ex:
-                    logger.warning(f'Host with URN could not be parsed due to incomplete inventory information {r}')
-                    pass
-                
-            elif identifier == 'Azure':
-                normalized_output.append(r['resourceConfig']['vmId'])
-                os_image = str()
-                AZURE_INVENTORY_CACHE[r['resourceConfig']['vmId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['timeCreated'], os_image)
-
-            else:
-                raise Exception (f'Error normalizing data set inputs! input: {input}, identifier: {identifier}')
-    else:
-        raise Exception (f'Empty input passed to normalize!')
-
-    return normalized_output
-
-
-def get_fargate_with_lacework_agents(input):
-    tasks_with_agent = list()
-    tasks_without_agent = list()
-
-    for page in input:
-        for task in page['data']:
-            task_placed = False
-            if 'containers' in task['resourceConfig']:
-                for container in task['resourceConfig']['containers']:
-                    if 'datacollector' in container['image']:
-                        tasks_with_agent.append(container['taskArn'])
-                        task_placed = True
-                        break
-                if not task_placed:
-                    tasks_without_agent.append(task['urn'])
-                
-    return (tasks_with_agent, tasks_without_agent)
-
-
 # inspect resource to determine if it matches known identifiers marking it as a k8s node
 def is_kubernetes(resource, identifier):
     if identifier == "Aws":
@@ -234,16 +130,23 @@ def get_urn_from_instanceid(instanceId):
         raise Exception (f"Input instanceId {instanceId} not found in cache!")
 
 
-def retrieve_all_data_results(generator):
+def get_fargate_with_lacework_agents(input):
+    tasks_with_agent = list()
+    tasks_without_agent = list()
 
-    results = list()
-    for row in generator:
-        for record in row['data']:
-            results.append(record)
-
-    # patching the data structure to avoid downstream manipulation atm
-    resultset = {'data':results}
-    return resultset
+    for page in input:
+        for task in page['data']:
+            task_placed = False
+            if 'containers' in task['resourceConfig']:
+                for container in task['resourceConfig']['containers']:
+                    if 'datacollector' in container['image']:
+                        tasks_with_agent.append(container['taskArn'])
+                        task_placed = True
+                        break
+                if not task_placed:
+                    tasks_without_agent.append(task['urn'])
+                
+    return (tasks_with_agent, tasks_without_agent)
 
 
 def apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory):
@@ -288,13 +191,219 @@ def apply_fargate_filter(client, start_time, end_time, instances_without_agents,
     return (instances_without_agents, matched_instances, agents_without_inventory)
 
 
+def get_agent_instances(client, start_time, end_time):
+
+    ########
+    # Agents
+    ########
+    all_agent_instances = client.agent_info.search(json={
+            'timeFilter': { 
+                'startTime' : start_time, 
+                'endTime'   : end_time
+            } 
+        })
+
+    list_agent_instances = list()
+    for page in all_agent_instances:
+        for r in page['data']:
+            if ('tags' in r.keys() 
+                    and 'VmProvider' in r['tags'].keys() 
+                    and r['tags']['VmProvider'] == 'GCE'):
+                
+                list_agent_instances.append(r['tags']['InstanceId'])
+                AGENT_CACHE[r['tags']['InstanceId']] = 'gcp' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
+
+            elif ('tags' in r.keys() 
+                    and 'VmProvider' in r['tags'].keys() 
+                    and r['tags']['VmProvider'] == 'AWS'):
+
+                if 'InstanceId' in r['tags'].keys(): # EC2 use case - InstanceId is in URN
+                    list_agent_instances.append(r['tags']['InstanceId'])
+                    if 'Account' in r['tags'].keys():
+                        AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
+                    else: # random Windows agent use case?
+                        AGENT_CACHE[r['tags']['InstanceId']] = 'aws' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
+                else: # Fargate use case 
+                    list_agent_instances.append(r['tags']['Hostname'])
+
+            elif ('tags' in r.keys() 
+                    and 'VmProvider' in r['tags'].keys() 
+                    and r['tags']['VmProvider'] == 'Microsoft.Compute'):
+
+                list_agent_instances.append(r['tags']['InstanceId'])
+                if 'Account' in r['tags'].keys():
+                    AGENT_CACHE[r['tags']['InstanceId']] = 'azure' + '/' + r['tags']['Account'] + '/' + r['tags']['Hostname']
+                else: # random Windows agent use case?
+                    AGENT_CACHE[r['tags']['InstanceId']] = 'azure' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
+
+            else:
+                list_agent_instances.append(r['hostname'])
+    
+    if check_truncation(list_agent_instances):
+        logger.warning(f'WARNING: Agent Instances truncated at {MAX_RESULT_SET} records')
+    logger.debug(f'Agent Instances: {list_agent_instances}\n')
+
+    return list_agent_instances
+
+
+def get_gcp_instance_inventory(client, start_time, end_time):
+    ######
+    # GCP
+    ######
+    gcp_inventory = client.inventory.search(json={
+            'timeFilter': { 
+                'startTime' : start_time, 
+                'endTime'   : end_time
+            }, 
+            'filters': [
+                { 'field': 'resourceType', 'expression': 'eq', 'value':'compute.googleapis.com/Instance'}
+            ],
+            'csp': 'GCP'
+        })
+
+    list_gcp_instances = list()
+    for page in gcp_inventory:
+        for r in page['data']:
+            # rough handling so that a small number of unexpected formats don't kill the entire output
+                try:
+                    list_gcp_instances.append(r['resourceConfig']['id'])
+                    # identify OS image from GCP instance
+                    os_image = str()
+                    try:
+                        count = 0
+                        for disk in r['resourceConfig']['disks']:
+                            if 'licenses' in disk.keys():
+                                os_image = r['resourceConfig']['disks'][count]['licenses']
+                                break
+                            elif 'initializeParams' in disk.keys():
+                                params = r['resourceConfig']['disks']['initializeParams'] 
+                                if 'sourceImage' in params:
+                                    os_image = r['resourceConfig']['disks']['initializeParams']['sourceImage']
+                                    break
+                            count += 1
+                    except:
+                        logger.warning('Unable to parse os_image info for instance {r}')
+
+                    GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,'Gcp'), r['resourceConfig']['creationTimestamp'], os_image)
+                except Exception as ex:
+                    logger.warning(f'Host could not be parsed due to incomplete inventory information {r}')
+                    pass
+
+    if check_truncation(list_gcp_instances):
+        logger.warning(f'WARNING: GCP Instances truncated at {MAX_RESULT_SET} records')
+    logger.debug(f'GCP Instances: {list_gcp_instances}\n')
+
+    return list_gcp_instances
+
+
+def get_aws_instance_inventory(client, start_time, end_time):
+    ######
+    # AWS
+    ######
+    aws_inventory = client.inventory.search(json={
+            'timeFilter': { 
+                'startTime' : start_time, 
+                'endTime'   : end_time
+            }, 
+            'filters': [
+                { 'field': 'resourceType', 'expression': 'eq', 'value':'ec2:instance'}
+            ],
+            'csp': 'AWS'
+        })
+
+    list_aws_instances = list()
+    for page in aws_inventory:
+        for r in page['data']:
+            # rough handling so that a small number of unexpected formats don't kill the entire output
+            try:
+                list_aws_instances.append(r['resourceConfig']['InstanceId'])
+                os_image = str()
+                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,'Aws'), r['resourceConfig']['LaunchTime'], os_image)
+            except:
+                logger.warning(f'Host could not be parsed due to incomplete inventory information {r}')
+                pass
+
+    if check_truncation(list_aws_instances):
+        logger.warning(f'WARNING: AWS Instances truncated at {MAX_RESULT_SET} records')
+    logger.debug(f'AWS Instances: {list_aws_instances}\n')
+    
+    return list_aws_instances
+
+
+def get_azure_instance_inventory(client, start_time, end_time):
+    ######
+    # Azure
+    ######
+    # TODO: Get VMSS instances
+    azure_inventory = client.inventory.search(json={
+            'timeFilter': { 
+                'startTime' : start_time, 
+                'endTime'   : end_time
+            }, 
+            'filters': [
+                { 'field': 'resourceType', 'expression': 'eq', 'value':'microsoft.compute/virtualmachines'}
+            ],
+            'csp': 'Azure'
+        })
+
+    list_azure_instances = list()
+    for page in azure_inventory:
+        for r in page['data']:
+            # rough handling so that a small number of unexpected formats don't kill the entire output
+            try:
+                list_azure_instances.append(r['resourceConfig']['vmId'])
+                os_image = str()
+                AZURE_INVENTORY_CACHE[r['resourceConfig']['vmId']] = (r['urn'], is_kubernetes(r,'Azure'), r['resourceConfig']['timeCreated'], os_image)
+            except:
+                logger.warning(f'Host could not be parsed due to incomplete inventory information {r}')
+                pass
+
+    if check_truncation(list_azure_instances):
+        logger.warning(f'WARNING: Azure Instances truncated at {MAX_RESULT_SET} records')
+    logger.debug(f'Azure Instances: {list_azure_instances}\n')
+
+    return list_azure_instances
+
+
+def apply_agent_presence_filtering(instance_inventory, list_agent_instances, lw_subaccount):
+
+    instances_without_agents = list()
+    matched_instances = list()
+    agents_without_inventory = list()
+
+    #########
+    # Set Ops
+    #########
+    for instance_id in instance_inventory:
+
+        urn_result = get_urn_from_instanceid(instance_id)
+        is_kubernetes = INSTANCE_CLUSTER_CACHE[instance_id] if instance_id in INSTANCE_CLUSTER_CACHE else False
+        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, lw_subaccount, urn_result[3])
+
+        if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
+            instances_without_agents.append(normalized_urn)
+            # TODO: add secondary check for "premptible instances"
+        else:
+            matched_instances.append(normalized_urn)
+
+    for instance in list_agent_instances:
+        if not any(instance in instance_urn.urn for instance_urn in matched_instances):
+            if instance in AGENT_CACHE:
+                # pull out host name if we have it
+                instance = AGENT_CACHE[instance]
+            o = OutputRecord(instance,'','',lw_subaccount,'')
+            agents_without_inventory.append(o)
+
+    return (instances_without_agents, matched_instances, agents_without_inventory)
+
+
 def main(args):
 
     if not args.profile and not args.account and not args.subaccount and not args.api_key and not args.api_secret:
         args.profile = 'default'
 
 
-    # TODO: Implement input flag validations
+    # TODO: Implement additional input flag validations
     if args.csv and args.json:
         logger.error('Please specify only one of --csv or --json for output formatting')
         exit(1)
@@ -326,128 +435,30 @@ def main(args):
     start_time = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     end_time = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
 
+    instances_without_agents = list()
+    matched_instances = list()
+    agents_without_inventory = list()
+
     # magic to get the current subaccount for reporting on where things are
     lw_subaccount = client.account._session.__dict__['_subaccount'] 
     if lw_subaccount == None:
         # very hacky pull of the subdomain off the base_url
         lw_subaccount = client.account._session.__dict__['_base_url'].split('.')[0].split(':')[1][2::]
 
-    ########
-    # Agents
-    ########
-    all_agent_instances = client.agent_info.search(json={
-            'timeFilter': { 
-                'startTime' : start_time, 
-                'endTime'   : end_time
-            } 
-        })
-    list_agent_instances = normalize_input(retrieve_all_data_results(all_agent_instances), 'agent')
-    if check_truncation(list_agent_instances):
-        logger.warning(f'WARNING: Agent Instances truncated at {MAX_RESULT_SET} records')
-    logger.debug(f'Agent Instances: {list_agent_instances}\n')
+    list_agent_instances = get_agent_instances(client, start_time, end_time)
+    list_gcp_instances = get_gcp_instance_inventory(client, start_time, end_time)
+    list_aws_instances = get_aws_instance_inventory(client, start_time, end_time)
+    list_azure_instances = get_azure_instance_inventory(client, start_time, end_time)
 
-    ######
-    # GCP
-    ######
-    gcp_inventory = client.inventory.search(json={
-            'timeFilter': { 
-                'startTime' : start_time, 
-                'endTime'   : end_time
-            }, 
-            'filters': [
-                { 'field': 'resourceType', 'expression': 'eq', 'value':'compute.googleapis.com/Instance'}
-            ],
-            'csp': 'GCP'
-        })
-    gcp_data = retrieve_all_data_results(gcp_inventory)
-    list_gcp_instances = normalize_input(gcp_data, 'Gcp')
-    if check_truncation(list_gcp_instances):
-        logger.warning(f'WARNING: GCP Instances truncated at {MAX_RESULT_SET} records')
-    logger.debug(f'GCP Instances: {list_gcp_instances}\n')
-
-
-    ######
-    # AWS
-    ######
-
-    aws_inventory = client.inventory.search(json={
-            'timeFilter': { 
-                'startTime' : start_time, 
-                'endTime'   : end_time
-            }, 
-            'filters': [
-                { 'field': 'resourceType', 'expression': 'eq', 'value':'ec2:instance'}
-            ],
-            'csp': 'AWS'
-        })
-    aws_data = retrieve_all_data_results(aws_inventory)
-    list_aws_instances = normalize_input(aws_data, 'Aws')
-    if check_truncation(list_aws_instances):
-        logger.warning(f'WARNING: AWS Instances truncated at {MAX_RESULT_SET} records')
-    logger.debug(f'AWS Instances: {list_aws_instances}\n')
-
-    ######
-    # Azure
-    ######
-    # TODO: Get VMSS instances
-    azure_inventory = client.inventory.search(json={
-            'timeFilter': { 
-                'startTime' : start_time, 
-                'endTime'   : end_time
-            }, 
-            'filters': [
-                { 'field': 'resourceType', 'expression': 'eq', 'value':'microsoft.compute/virtualmachines'}
-            ],
-            'csp': 'Azure'
-        })
-    azure_data = retrieve_all_data_results(azure_inventory)
-    list_azure_instances = normalize_input(azure_data, 'Azure')
-    if check_truncation(list_azure_instances):
-        logger.warning(f'WARNING: Azure Instances truncated at {MAX_RESULT_SET} records')
-    logger.debug(f'Azure Instances: {list_azure_instances}\n')
-
-    ##################
-
-
-    #########
-    # Set Ops
-    #########
-    all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances) | set(list_azure_instances)
-
-    instances_without_agents = list()
-    matched_instances = list()
-
-    for instance_id in all_instances_inventory:
-
-        urn_result = get_urn_from_instanceid(instance_id)
-        is_kubernetes = INSTANCE_CLUSTER_CACHE[instance_id] if instance_id in INSTANCE_CLUSTER_CACHE else False
-        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, lw_subaccount, urn_result[3])
-
-        if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
-            instances_without_agents.append(normalized_urn)
-            # TODO: add secondary check for "premptible instances"
-        else:
-            matched_instances.append(normalized_urn)
-
-
-    agents_without_inventory = list()
-
-    for instance in list_agent_instances:
-        if not any(instance in instance_urn.urn for instance_urn in matched_instances):
-            if instance in AGENT_CACHE:
-                # pull out host name if we have it
-                instance = AGENT_CACHE[instance]
-            o = OutputRecord(instance,'','',lw_subaccount,'')
-            agents_without_inventory.append(o)
+    all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances) | set(list_azure_instances) # union the three sets
+    instances_without_agents, matched_instances, agents_without_inventory = apply_agent_presence_filtering(all_instances_inventory, list_agent_instances, lw_subaccount)
 
     logger.debug(f'Instances_without_agents:{instances_without_agents}')
     logger.debug(f'Matched_Instances:{matched_instances}')
     logger.debug(f'Agents_without_inventory:{agents_without_inventory}')
 
-
     # run the Fargate pass as a separate filter (for now)
     instances_without_agents, matched_instances, agents_without_inventory = apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory)
-
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.json:

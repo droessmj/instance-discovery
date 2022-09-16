@@ -4,7 +4,7 @@
 
 A script to review current Lacework instance inventories against active agents to help identify hosts lacking the Lacework agent.
 
-Supports GCP & AWS. Azure to follow shortly.
+Supports GCP & AWS. Azure VM support present, but not comprehensive for VMSS. Initial Fargate support just introduced. 
 
 ## How to Run
 

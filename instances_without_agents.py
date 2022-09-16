@@ -242,6 +242,48 @@ def retrieve_all_data_results(generator):
     return resultset
 
 
+def apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory):
+
+    ##########
+    # Fargate is different
+    ##########
+    fargate_inventory = client.inventory.search(json={
+            'timeFilter': { 
+                'startTime' : start_time, 
+                'endTime'   : end_time
+            }, 
+            'filters': [
+                { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task'},
+                # { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task-definition'},
+                # { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:service'}
+            ],
+            'csp': 'AWS'
+        })
+    fargate_tasks_with_agent, fargate_tasks_without_agent = get_fargate_with_lacework_agents(fargate_inventory)
+
+    # Fargate complications -- Currently going to run this as a completely seperate filter
+    # and modify the three existing result sets independently
+
+    matched_fargate_instances = set([task for task in fargate_tasks_with_agent if any(task in hostname.urn for hostname in agents_without_inventory)])
+    matched_fargate_instance_output_records = [OutputRecord(t, '', False, '', '') for t in matched_fargate_instances]
+    matched_instances.extend(matched_fargate_instance_output_records)
+    logger.debug(f'matched faragate instances: {len(matched_instances)}')
+    logger.debug(f'missing fargate instances: {len(fargate_tasks_without_agent)}')
+
+    # The rfind is likely not comprehensive, but it nails it for the sample data
+    # so in the spirit of getting something out there...away we go
+    logger.debug(f'agents w/o inventory - pre: {len(agents_without_inventory)}')
+    agents_without_inventory = [a for a in agents_without_inventory if a.urn[0:a.urn.rfind('_')] not in matched_fargate_instances]
+    logger.debug(f'agents w/o inventory - post: {len(agents_without_inventory)}')
+
+    logger.debug(f'instances w/o agents - pre: {len(instances_without_agents)}')
+    fargate_instances_without_agent_records = [OutputRecord(t, '', False, '', '') for t in fargate_tasks_without_agent]
+    instances_without_agents.extend(fargate_instances_without_agent_records)
+    logger.debug(f'instances w/o agents - post: {len(instances_without_agents)}')
+
+    return (instances_without_agents, matched_instances, agents_without_inventory)
+
+
 def main(args):
 
     if not args.profile and not args.account and not args.subaccount and not args.api_key and not args.api_secret:
@@ -362,23 +404,6 @@ def main(args):
 
     ##################
 
-    ##########
-    # Fargate is different
-    ##########
-    fargate_inventory = client.inventory.search(json={
-            'timeFilter': { 
-                'startTime' : start_time, 
-                'endTime'   : end_time
-            }, 
-            'filters': [
-                { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task'},
-                # { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task-definition'},
-                # { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:service'}
-            ],
-            'csp': 'AWS'
-        })
-    fargate_tasks_with_agent, fargate_tasks_without_agent = get_fargate_with_lacework_agents(fargate_inventory)
-    fargate_tasks_with_agent_set = set(fargate_tasks_with_agent)
 
     #########
     # Set Ops
@@ -405,8 +430,6 @@ def main(args):
 
     for instance in list_agent_instances:
         if not any(instance in instance_urn.urn for instance_urn in matched_instances):
-            # TODO: there's something Fargate to be done here....
-
             if instance in AGENT_CACHE:
                 # pull out host name if we have it
                 instance = AGENT_CACHE[instance]
@@ -418,18 +441,8 @@ def main(args):
     logger.debug(f'Agents_without_inventory:{agents_without_inventory}')
 
 
-    ##################################################
-    # Fargate complications -- Currently going to run this as a completely seperate filter
-    # and modify the three existing result sets independently
-
-    matched_fargate_instances = [task for task in fargate_tasks_with_agent if any(task in hostname.urn for hostname in agents_without_inventory)]
-    matched_instances = matched_instances.extend(matched_instances)
-    !!!!
-    # TODO -- there's some normalization to tackle yet here....need to trim a.urn down to match the Fargate provided notation
-    agents_without_inventory = [a for a in agents_without_inventory if a not in matched_fargate_instances]
-    !!!!
-    instances_without_agents = instances_without_agents.extend(fargate_tasks_without_agent)
-    ##################################################
+    # run the Fargate pass as a separate filter (for now)
+    instances_without_agents, matched_instances, agents_without_inventory = apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory)
 
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)

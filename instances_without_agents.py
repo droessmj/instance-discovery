@@ -144,27 +144,31 @@ def normalize_input(input, identifier):
 
 
             elif identifier == 'Gcp':
-                normalized_output.append(r['resourceConfig']['id'])
-
-                # identify OS image from GCP instance
-                os_image = str()
+                # wrapping in a try/execpt so that a single parsing failure doesn't take out the entire output
                 try:
-                    count = 0
-                    for disk in r['resourceConfig']['disks']:
-                        if 'licenses' in disk.keys():
-                            os_image = r['resourceConfig']['disks'][count]['licenses']
-                            break
-                        elif 'initializeParams' in disk.keys():
-                            params = r['resourceConfig']['disks']['initializeParams'] 
-                            if 'sourceImage' in params:
-                                os_image = r['resourceConfig']['disks']['initializeParams']['sourceImage']
+                    normalized_output.append(r['resourceConfig']['id'])
+                    # identify OS image from GCP instance
+                    os_image = str()
+                    try:
+                        count = 0
+                        for disk in r['resourceConfig']['disks']:
+                            if 'licenses' in disk.keys():
+                                os_image = r['resourceConfig']['disks'][count]['licenses']
                                 break
-                        count += 1
+                            elif 'initializeParams' in disk.keys():
+                                params = r['resourceConfig']['disks']['initializeParams'] 
+                                if 'sourceImage' in params:
+                                    os_image = r['resourceConfig']['disks']['initializeParams']['sourceImage']
+                                    break
+                            count += 1
+                    except:
+                        logger.error('unable to parse os_image info for instance')
+
+                    GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['creationTimestamp'], os_image)
                 except Exception as ex:
-                    print(ex)
+                    logger.warning(f'Host with URN could not be parsed due to incomplete inventory information {r}')
                     pass
                 
-                GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['creationTimestamp'], os_image)
             elif identifier == 'Azure':
                 normalized_output.append(r['resourceConfig']['vmId'])
                 os_image = str()

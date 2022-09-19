@@ -430,9 +430,6 @@ def apply_cross_account_reconciliations(instances_without_agents, agents_without
 
 def output_statistics(instance_result, user_profile_data):
 
-    # self.instances_without_agents = list(instances_without_agents)
-    # self.instances_with_agents = list(instances_with_agents)
-    # self.agents_without_inventory = list(agents_without_inventory)
     coverage_percent = round((len(instance_result.instances_with_agents) / len(instance_result.instances_without_agents + instance_result.instances_with_agents)) * 100, 2) if len(instance_result.instances_with_agents) > 0 else 0
     print(f'Number of distinct hosts identified during inventory assessment: {len(instance_result.instances_without_agents + instance_result.instances_with_agents)}')
     print(f'Number of hosts which report successful agent operation: {len(instance_result.instances_with_agents)}')

@@ -397,13 +397,36 @@ def apply_agent_presence_filtering(instance_inventory, list_agent_instances, lw_
     return (instances_without_agents, matched_instances, agents_without_inventory)
 
 
+def generate_subaccount_report(client, start_time, end_time, lw_subaccount):
+    list_agent_instances = get_agent_instances(client, start_time, end_time)
+    list_gcp_instances = get_gcp_instance_inventory(client, start_time, end_time)
+    list_aws_instances = get_aws_instance_inventory(client, start_time, end_time)
+    list_azure_instances = get_azure_instance_inventory(client, start_time, end_time)
+
+    all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances) | set(list_azure_instances) # union the three sets
+    instances_without_agents, matched_instances, agents_without_inventory = apply_agent_presence_filtering(all_instances_inventory, list_agent_instances, lw_subaccount)
+
+    logger.debug(f'Instances_without_agents:{instances_without_agents}')
+    logger.debug(f'Matched_Instances:{matched_instances}')
+    logger.debug(f'Agents_without_inventory:{agents_without_inventory}')
+
+    # run the Fargate pass as a separate filter (for now)
+    instances_without_agents, matched_instances, agents_without_inventory = apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory)
+
+    instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
+    if args.json:
+        instance_result.printJson()
+    elif args.csv:
+        instance_result.printCsv()
+    else:
+        instance_result.printStandard()
+
+
 def main(args):
 
     if not args.profile and not args.account and not args.subaccount and not args.api_key and not args.api_secret:
         args.profile = 'default'
 
-
-    # TODO: Implement additional input flag validations
     if args.csv and args.json:
         logger.error('Please specify only one of --csv or --json for output formatting')
         exit(1)
@@ -435,38 +458,30 @@ def main(args):
     start_time = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     end_time = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    instances_without_agents = list()
-    matched_instances = list()
-    agents_without_inventory = list()
+    # TODO: Aggregate top level to reconcile across sub-accounts (for use cases where host
+    #       has inventory in one sub-account and machine agent data in another...)
+    # instances_without_agents = list()
+    # matched_instances = list()
+    # agents_without_inventory = list()
 
-    # magic to get the current subaccount for reporting on where things are
-    lw_subaccount = client.account._session.__dict__['_subaccount'] 
-    if lw_subaccount == None:
-        # very hacky pull of the subdomain off the base_url
-        lw_subaccount = client.account._session.__dict__['_base_url'].split('.')[0].split(':')[1][2::]
+    # Grab the lacework accounts that the user has access to
+    user_profile = client.user_profile.get()
+    user_profile_data = user_profile.get("data", {})[0]
 
-    list_agent_instances = get_agent_instances(client, start_time, end_time)
-    list_gcp_instances = get_gcp_instance_inventory(client, start_time, end_time)
-    list_aws_instances = get_aws_instance_inventory(client, start_time, end_time)
-    list_azure_instances = get_azure_instance_inventory(client, start_time, end_time)
+    if args.current_sub_account_only:
+        # magic to get the current subaccount for reporting on where things are
+        lw_subaccount = client.account._session.__dict__['_subaccount'] 
+        if lw_subaccount == None:
+            # very hacky pull of the subdomain off the base_url
+            lw_subaccount = client.account._session.__dict__['_base_url'].split('.')[0].split(':')[1][2::]
 
-    all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances) | set(list_azure_instances) # union the three sets
-    instances_without_agents, matched_instances, agents_without_inventory = apply_agent_presence_filtering(all_instances_inventory, list_agent_instances, lw_subaccount)
+        generate_subaccount_report(client, start_time, end_time, lw_subaccount)
 
-    logger.debug(f'Instances_without_agents:{instances_without_agents}')
-    logger.debug(f'Matched_Instances:{matched_instances}')
-    logger.debug(f'Agents_without_inventory:{agents_without_inventory}')
-
-    # run the Fargate pass as a separate filter (for now)
-    instances_without_agents, matched_instances, agents_without_inventory = apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory)
-
-    instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
-    if args.json:
-        instance_result.printJson()
-    elif args.csv:
-        instance_result.printCsv()
     else:
-        instance_result.printStandard()
+        # Iterate through all subaccounts
+        for lw_subaccount in user_profile_data.get('accounts', []):
+            lw_subaccount_name = lw_subaccount.get('accountName','error-pulling-accountName')
+            generate_subaccount_report(client, start_time, end_time, lw_subaccount_name)
 
 
 if __name__ == '__main__':
@@ -499,6 +514,12 @@ if __name__ == '__main__':
         '-p', '--profile',
         default=os.environ.get('LW_PROFILE', None),
         help='The Lacework CLI profile to use'
+    )
+    parser.add_argument(
+        '--current-sub-account-only',
+        default=False,
+        action='store_true',
+        help='Report results for only current sub-account. Default is to iterate all sub-accounts the user has read access to.'
     )
     parser.add_argument(
         '--json',

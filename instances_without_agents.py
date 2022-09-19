@@ -19,12 +19,13 @@ INSTANCE_CLUSTER_CACHE = {}
 
 
 class OutputRecord():
-    def __init__(self, urn, creation_time, is_kubernetes, subaccount, os_image):
+    def __init__(self, urn, creation_time, is_kubernetes, subaccount, os_image, tags=None):
         self.urn = urn
         self.creation_time = creation_time
         self.is_kubernetes = is_kubernetes
         self.os_image = os_image
         self.subaccount = subaccount
+        self.tags = tags
     
     def __str__(self) -> str:
         return json.dumps(self.__dict__, indent=4, sort_keys=True)
@@ -50,15 +51,15 @@ class InstanceResult():
         print(json.dumps(self.__dict__, indent=4, sort_keys=True, default=serialize))
 
     def printCsv(self):
-        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Os_image,Subaccount")
+        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Os_image,Tags,Subaccount")
         for i in self.instances_without_agents:
-            print(f'{i.urn},{i.creation_time},true,,,"{i.os_image}",{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},true,,,"{i.os_image}","{i.tags}",{i.subaccount}')
 
         for i in self.instances_with_agents:
-            print(f'{i.urn},{i.creation_time},,true,,"{i.os_image}",{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},,true,,"{i.os_image}","{i.tags}",{i.subaccount}')
 
         for i in self.agents_without_inventory:
-            print(f'{i.urn},{i.creation_time},,,true,"{i.os_image}",{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},,,true,"{i.os_image}","{i.tags}",{i.subaccount}')
 
 
     def printStandard(self):
@@ -140,7 +141,7 @@ def normalize_input(input, identifier):
             elif identifier == 'Aws':
                 normalized_output.append(r['resourceConfig']['InstanceId'])
                 os_image = str()
-                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'], os_image)
+                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'], os_image, r['resourceConfig']['Tags'])
 
 
             elif identifier == 'Gcp':
@@ -164,7 +165,7 @@ def normalize_input(input, identifier):
                     except:
                         logger.error('unable to parse os_image info for instance')
 
-                    GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['creationTimestamp'], os_image)
+                    GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['creationTimestamp'], os_image,'')
                 except Exception as ex:
                     logger.warning(f'Host with URN could not be parsed due to incomplete inventory information {r}')
                     pass
@@ -172,7 +173,7 @@ def normalize_input(input, identifier):
             elif identifier == 'Azure':
                 normalized_output.append(r['resourceConfig']['vmId'])
                 os_image = str()
-                AZURE_INVENTORY_CACHE[r['resourceConfig']['vmId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['timeCreated'], os_image)
+                AZURE_INVENTORY_CACHE[r['resourceConfig']['vmId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['timeCreated'], os_image, '')
 
             else:
                 raise Exception (f'Error normalizing data set inputs! input: {input}, identifier: {identifier}')
@@ -269,7 +270,7 @@ def apply_fargate_filter(client, start_time, end_time, instances_without_agents,
     # and modify the three existing result sets independently
 
     matched_fargate_instances = set([task for task in fargate_tasks_with_agent if any(task in hostname.urn for hostname in agents_without_inventory)])
-    matched_fargate_instance_output_records = [OutputRecord(t, '', False, '', '') for t in matched_fargate_instances]
+    matched_fargate_instance_output_records = [OutputRecord(t, '', False, '', '', '') for t in matched_fargate_instances]
     matched_instances.extend(matched_fargate_instance_output_records)
     logger.debug(f'matched faragate instances: {len(matched_instances)}')
     logger.debug(f'missing fargate instances: {len(fargate_tasks_without_agent)}')
@@ -281,7 +282,7 @@ def apply_fargate_filter(client, start_time, end_time, instances_without_agents,
     logger.debug(f'agents w/o inventory - post: {len(agents_without_inventory)}')
 
     logger.debug(f'instances w/o agents - pre: {len(instances_without_agents)}')
-    fargate_instances_without_agent_records = [OutputRecord(t, '', False, '', '') for t in fargate_tasks_without_agent]
+    fargate_instances_without_agent_records = [OutputRecord(t, '', False, '', '', '') for t in fargate_tasks_without_agent]
     instances_without_agents.extend(fargate_instances_without_agent_records)
     logger.debug(f'instances w/o agents - post: {len(instances_without_agents)}')
 
@@ -421,7 +422,7 @@ def main(args):
 
         urn_result = get_urn_from_instanceid(instance_id)
         is_kubernetes = INSTANCE_CLUSTER_CACHE[instance_id] if instance_id in INSTANCE_CLUSTER_CACHE else False
-        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, lw_subaccount, urn_result[3])
+        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, lw_subaccount, urn_result[3], urn_result[4])
 
         if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
             instances_without_agents.append(normalized_urn)
@@ -437,7 +438,7 @@ def main(args):
             if instance in AGENT_CACHE:
                 # pull out host name if we have it
                 instance = AGENT_CACHE[instance]
-            o = OutputRecord(instance,'','',lw_subaccount,'')
+            o = OutputRecord(instance,'','',lw_subaccount,'', '')
             agents_without_inventory.append(o)
 
     logger.debug(f'Instances_without_agents:{instances_without_agents}')

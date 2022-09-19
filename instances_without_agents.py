@@ -35,12 +35,16 @@ class OutputRecord():
     def __eq__(self, o: object) -> bool:
         return self.urn == o.urn
 
+    def __hash__(self) -> int:
+        return hash(self.urn)
+
+
 
 class InstanceResult():
     def __init__(self, instances_without_agents, instances_with_agents, agents_without_inventory) -> None:
-        self.instances_without_agents = instances_without_agents
-        self.instances_with_agents = instances_with_agents
-        self.agents_without_inventory = agents_without_inventory
+        self.instances_without_agents = list(instances_without_agents)
+        self.instances_with_agents = list(instances_with_agents)
+        self.agents_without_inventory = list(agents_without_inventory)
 
         self.instances_without_agents.sort(key=lambda x: x.urn)
         self.instances_with_agents.sort(key=lambda x: x.urn)
@@ -149,7 +153,7 @@ def get_fargate_with_lacework_agents(input):
     return (tasks_with_agent, tasks_without_agent)
 
 
-def apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory):
+def apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory, lw_subaccount_name):
 
     ##########
     # Fargate is different
@@ -172,7 +176,7 @@ def apply_fargate_filter(client, start_time, end_time, instances_without_agents,
     # and modify the three existing result sets independently
 
     matched_fargate_instances = set([task for task in fargate_tasks_with_agent if any(task in hostname.urn for hostname in agents_without_inventory)])
-    matched_fargate_instance_output_records = [OutputRecord(t, '', False, '', '') for t in matched_fargate_instances]
+    matched_fargate_instance_output_records = [OutputRecord(t, '', False, lw_subaccount_name, '' ) for t in matched_fargate_instances]
     matched_instances.extend(matched_fargate_instance_output_records)
     logger.debug(f'matched faragate instances: {len(matched_instances)}')
     logger.debug(f'missing fargate instances: {len(fargate_tasks_without_agent)}')
@@ -184,7 +188,7 @@ def apply_fargate_filter(client, start_time, end_time, instances_without_agents,
     logger.debug(f'agents w/o inventory - post: {len(agents_without_inventory)}')
 
     logger.debug(f'instances w/o agents - pre: {len(instances_without_agents)}')
-    fargate_instances_without_agent_records = [OutputRecord(t, '', False, '', '') for t in fargate_tasks_without_agent]
+    fargate_instances_without_agent_records = [OutputRecord(t, '', False, lw_subaccount_name, '') for t in fargate_tasks_without_agent]
     instances_without_agents.extend(fargate_instances_without_agent_records)
     logger.debug(f'instances w/o agents - post: {len(instances_without_agents)}')
 
@@ -282,7 +286,7 @@ def get_gcp_instance_inventory(client, start_time, end_time):
                                     break
                             count += 1
                     except:
-                        logger.warning('Unable to parse os_image info for instance {r}')
+                        logger.warning(f'Unable to parse os_image info for instance {r}')
 
                     GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,'Gcp'), r['resourceConfig']['creationTimestamp'], os_image)
                 except Exception as ex:
@@ -411,15 +415,19 @@ def generate_subaccount_report(client, start_time, end_time, lw_subaccount):
     logger.debug(f'Agents_without_inventory:{agents_without_inventory}')
 
     # run the Fargate pass as a separate filter (for now)
-    instances_without_agents, matched_instances, agents_without_inventory = apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory)
+    instances_without_agents, matched_instances, agents_without_inventory = apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory, lw_subaccount)
 
-    instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
-    if args.json:
-        instance_result.printJson()
-    elif args.csv:
-        instance_result.printCsv()
-    else:
-        instance_result.printStandard()
+    return (instances_without_agents, matched_instances, agents_without_inventory)
+
+
+def apply_cross_account_reconciliations(instances_without_agents, agents_without_inventory):
+
+    # perform a set operation on the i.URN, take first sub-account
+    # data has been de-normalized...maybe we need to pass the normal value in an OutputRecord for usage here?
+
+    # set operation for agents w/o inventory? they should be distinct...may need to take normalizations into account?
+
+    return (instances_without_agents, agents_without_inventory)
 
 
 def main(args):
@@ -458,11 +466,9 @@ def main(args):
     start_time = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     end_time = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    # TODO: Aggregate top level to reconcile across sub-accounts (for use cases where host
-    #       has inventory in one sub-account and machine agent data in another...)
-    # instances_without_agents = list()
-    # matched_instances = list()
-    # agents_without_inventory = list()
+    instances_without_agents = set()
+    matched_instances = set()
+    agents_without_inventory = set()
 
     # Grab the lacework accounts that the user has access to
     user_profile = client.user_profile.get()
@@ -475,14 +481,33 @@ def main(args):
             # very hacky pull of the subdomain off the base_url
             lw_subaccount = client.account._session.__dict__['_base_url'].split('.')[0].split(':')[1][2::]
 
-        generate_subaccount_report(client, start_time, end_time, lw_subaccount)
+        instances_without_agents, matched_instances, agents_without_inventory = generate_subaccount_report(client, start_time, end_time, lw_subaccount)
 
     else:
         # Iterate through all subaccounts
         for lw_subaccount in user_profile_data.get('accounts', []):
-            lw_subaccount_name = lw_subaccount.get('accountName','error-pulling-accountName')
-            generate_subaccount_report(client, start_time, end_time, lw_subaccount_name)
+            lw_subaccount_name = lw_subaccount.get('accountName','')
+            client.set_subaccount(lw_subaccount_name)
 
+            result = generate_subaccount_report(client, start_time, end_time, lw_subaccount_name)
+            instances_without_agents = instances_without_agents.union(result[0])
+            matched_instances = matched_instances.union(result[1])
+            agents_without_inventory = agents_without_inventory.union(result[2])
+    
+        # TODO: Cross-sub-account reconciliations
+        # Scenarios:
+        # - I have a host that's reconciled (matched_instances)...no more processing to accomplish
+        # - Dupes should be handled by the Sets above...
+            # - I have inventory in sa1, agent in sa2..check for cross-account agent
+        instances_without_agents, agents_without_inventory = apply_cross_account_reconciliations(instances_without_agents, agents_without_inventory)
+
+    instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
+    if args.json:
+        instance_result.printJson()
+    elif args.csv:
+        instance_result.printCsv()
+    else:
+        instance_result.printStandard()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(

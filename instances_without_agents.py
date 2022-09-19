@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from xml.dom.minidom import Identified
 from laceworksdk import LaceworkClient
 import json
 import argparse
@@ -8,20 +9,19 @@ import os
 
 MAX_RESULT_SET = 500_000
 LOOKBACK_DAYS = 1
-GCP_INVENTORY_CACHE = {}
-AWS_INVENTORY_CACHE = {}
-AZURE_INVENTORY_CACHE = {}
+INVENTORY_CACHE = {}
 AGENT_CACHE = {}
 INSTANCE_CLUSTER_CACHE = {}
 
 
 class OutputRecord():
-    def __init__(self, urn, creation_time, is_kubernetes, subaccount, os_image):
+    def __init__(self, urn, creation_time, is_kubernetes, subaccount, os_image, tags=None):
         self.urn = urn
         self.creation_time = creation_time
         self.is_kubernetes = is_kubernetes
         self.os_image = os_image
         self.subaccount = subaccount
+        self.tags = tags
     
     def __str__(self) -> str:
         return json.dumps(self.__dict__, indent=4, sort_keys=True)
@@ -34,7 +34,6 @@ class OutputRecord():
 
     def __hash__(self) -> int:
         return hash(self.urn)
-
 
 
 class InstanceResult():
@@ -51,15 +50,15 @@ class InstanceResult():
         print(json.dumps(self.__dict__, indent=4, sort_keys=True, default=serialize))
 
     def printCsv(self):
-        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Os_image,Subaccount")
+        print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Os_image,Tags,Subaccount")
         for i in self.instances_without_agents:
-            print(f'{i.urn},{i.creation_time},true,,,"{i.os_image}",{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},true,,,"{i.os_image}","{str(i.tags).replace(chr(34),chr(39))}",{i.subaccount}')
 
         for i in self.instances_with_agents:
-            print(f'{i.urn},{i.creation_time},,true,,"{i.os_image}",{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},,true,,"{i.os_image}","{str(i.tags).replace(chr(34),chr(39))}",{i.subaccount}')
 
         for i in self.agents_without_inventory:
-            print(f'{i.urn},{i.creation_time},,,true,"{i.os_image}",{i.subaccount}')
+            print(f'{i.urn},{i.creation_time},,,true,"{i.os_image}","{str(i.tags).replace(chr(34),chr(39))}",{i.subaccount}')
 
 
     def printStandard(self):
@@ -120,32 +119,22 @@ def is_kubernetes(resource, identifier):
     return False
 
 
-def get_urn_from_instanceid(instanceId):
-    if instanceId in AWS_INVENTORY_CACHE:
-        return AWS_INVENTORY_CACHE[instanceId]
-    elif instanceId in GCP_INVENTORY_CACHE:
-        return GCP_INVENTORY_CACHE[instanceId]
-    elif instanceId in AZURE_INVENTORY_CACHE:
-        return AZURE_INVENTORY_CACHE[instanceId]
-    else:
-        raise Exception (f"Input instanceId {instanceId} not found in cache!")
-
-
-def get_fargate_with_lacework_agents(input):
+def get_fargate_with_lacework_agents(input, lw_subaccount):
     tasks_with_agent = list()
     tasks_without_agent = list()
 
     for page in input:
         for task in page['data']:
             task_placed = False
+            tags = task['resourceConfig']['tags'] if 'tags' in task['resourceConfig'] else ''
             if 'containers' in task['resourceConfig']:
                 for container in task['resourceConfig']['containers']:
                     if 'datacollector' in container['image']:
-                        tasks_with_agent.append(container['taskArn'])
+                        tasks_with_agent.append(OutputRecord(container['taskArn'],'',False, lw_subaccount, '', tags))
                         task_placed = True
                         break
                 if not task_placed:
-                    tasks_without_agent.append(task['urn'])
+                    tasks_without_agent.append(OutputRecord(task['resourceConfig']['taskArn'],'',False, lw_subaccount, '', tags))
                 
     return (tasks_with_agent, tasks_without_agent)
 
@@ -161,32 +150,31 @@ def apply_fargate_filter(client, start_time, end_time, instances_without_agents,
                 'endTime'   : end_time
             }, 
             'filters': [
-                { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task'},
-                # { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task-definition'},
-                # { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:service'}
+                { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task'}
             ],
             'csp': 'AWS'
         })
-    fargate_tasks_with_agent, fargate_tasks_without_agent = get_fargate_with_lacework_agents(fargate_inventory)
+
+    # TODO: type the task
+    fargate_tasks_with_agent, fargate_tasks_without_agent = get_fargate_with_lacework_agents(fargate_inventory, lw_subaccount_name)
 
     # Fargate complications -- Currently going to run this as a completely seperate filter
     # and modify the three existing result sets independently
 
-    matched_fargate_instances = set([task for task in fargate_tasks_with_agent if any(task in hostname.urn for hostname in agents_without_inventory)])
-    matched_fargate_instance_output_records = [OutputRecord(t, '', False, lw_subaccount_name, '' ) for t in matched_fargate_instances]
-    matched_instances.extend(matched_fargate_instance_output_records)
+    matched_fargate_instances = set([task for task in fargate_tasks_with_agent if any(task.urn in hostname.urn for hostname in agents_without_inventory)])
+    matched_instances.extend(matched_fargate_instances)
     logger.debug(f'matched faragate instances: {len(matched_instances)}')
     logger.debug(f'missing fargate instances: {len(fargate_tasks_without_agent)}')
 
     # The rfind is likely not comprehensive, but it nails it for the sample data
     # so in the spirit of getting something out there...away we go
     logger.debug(f'agents w/o inventory - pre: {len(agents_without_inventory)}')
-    agents_without_inventory = [a for a in agents_without_inventory if a.urn[0:a.urn.rfind('_')] not in matched_fargate_instances]
+    set_matched_fargate_urns = set([t.urn for t in matched_fargate_instances])
+    agents_without_inventory = [a for a in agents_without_inventory if a.urn[0:a.urn.rfind('_')] not in set_matched_fargate_urns]
     logger.debug(f'agents w/o inventory - post: {len(agents_without_inventory)}')
 
     logger.debug(f'instances w/o agents - pre: {len(instances_without_agents)}')
-    fargate_instances_without_agent_records = [OutputRecord(t, '', False, lw_subaccount_name, '') for t in fargate_tasks_without_agent]
-    instances_without_agents.extend(fargate_instances_without_agent_records)
+    instances_without_agents.extend(fargate_tasks_without_agent)
     logger.debug(f'instances w/o agents - post: {len(instances_without_agents)}')
 
     return (instances_without_agents, matched_instances, agents_without_inventory)
@@ -247,7 +235,7 @@ def get_agent_instances(client, start_time, end_time):
     return list_agent_instances
 
 
-def get_gcp_instance_inventory(client, start_time, end_time):
+def get_gcp_instance_inventory(client, start_time, end_time, lw_subaccount):
     ######
     # GCP
     ######
@@ -264,10 +252,12 @@ def get_gcp_instance_inventory(client, start_time, end_time):
 
     list_gcp_instances = list()
     for page in gcp_inventory:
-        for r in page['data']:
+        for r in page.get('data', []):
             # rough handling so that a small number of unexpected formats don't kill the entire output
                 try:
-                    list_gcp_instances.append(r['resourceConfig']['id'])
+                    tags = r['resourceConfig']['tags'] if 'tags' in r['resourceConfig'] else ''
+                    identifier = r['resourceConfig']['id']
+                    list_gcp_instances.append(identifier)
                     # identify OS image from GCP instance
                     os_image = str()
                     try:
@@ -286,9 +276,9 @@ def get_gcp_instance_inventory(client, start_time, end_time):
                         if r['resourceConfig']['status'] != 'TERMINATED':
                             logger.warning(f'Unable to parse os_image info for instance {r}')
 
-                    GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,'Gcp'), r['resourceConfig']['creationTimestamp'], os_image)
+                    INVENTORY_CACHE[identifier] = OutputRecord(r['urn'], r['resourceConfig']['creationTimestamp'], is_kubernetes(r,'Gcp'), lw_subaccount, os_image, tags)
                 except Exception as ex:
-                    logger.warning(f'Host could not be parsed due to incomplete inventory information {r}')
+                    logger.warning(f'Host could not be parsed due to incomplete inventory information: {ex} \n{r}')
                     pass
 
     if check_truncation(list_gcp_instances):
@@ -298,7 +288,7 @@ def get_gcp_instance_inventory(client, start_time, end_time):
     return list_gcp_instances
 
 
-def get_aws_instance_inventory(client, start_time, end_time):
+def get_aws_instance_inventory(client, start_time, end_time, lw_subaccount):
     ######
     # AWS
     ######
@@ -315,14 +305,16 @@ def get_aws_instance_inventory(client, start_time, end_time):
 
     list_aws_instances = list()
     for page in aws_inventory:
-        for r in page['data']:
+        for r in page.get('data', []):
             # rough handling so that a small number of unexpected formats don't kill the entire output
             try:
-                list_aws_instances.append(r['resourceConfig']['InstanceId'])
+                identifier = r['resourceConfig']['InstanceId']
+                tags = r['resourceConfig']['Tags'] if 'Tags' in r['resourceConfig'] else ''
+                list_aws_instances.append(identifier)
                 os_image = str()
-                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,'Aws'), r['resourceConfig']['LaunchTime'], os_image)
-            except:
-                logger.warning(f'Host could not be parsed due to incomplete inventory information {r}')
+                INVENTORY_CACHE[identifier] = OutputRecord(r['urn'],  r['resourceConfig']['LaunchTime'], is_kubernetes(r,'Aws'), lw_subaccount, os_image, tags)
+            except Exception as ex:
+                logger.warning(f'Host could not be parsed due to incomplete inventory information: {ex} \n{r}')
                 pass
 
     if check_truncation(list_aws_instances):
@@ -332,7 +324,7 @@ def get_aws_instance_inventory(client, start_time, end_time):
     return list_aws_instances
 
 
-def get_azure_instance_inventory(client, start_time, end_time):
+def get_azure_instance_inventory(client, start_time, end_time, lw_subaccount):
     ######
     # Azure
     ######
@@ -350,14 +342,16 @@ def get_azure_instance_inventory(client, start_time, end_time):
 
     list_azure_instances = list()
     for page in azure_inventory:
-        for r in page['data']:
+        for r in page.get('data', []):
             # rough handling so that a small number of unexpected formats don't kill the entire output
             try:
-                list_azure_instances.append(r['resourceConfig']['vmId'])
+                tags = r['resourceTags'] if 'resourceTags' in r else ''
+                identifier = r['resourceConfig']['vmId']
+                list_azure_instances.append(identifier)
                 os_image = str()
-                AZURE_INVENTORY_CACHE[r['resourceConfig']['vmId']] = (r['urn'], is_kubernetes(r,'Azure'), r['resourceConfig']['timeCreated'], os_image)
-            except:
-                logger.warning(f'Host could not be parsed due to incomplete inventory information {r}')
+                INVENTORY_CACHE[identifier] = OutputRecord(r['urn'], r['resourceConfig']['timeCreated'], is_kubernetes(r,'Azure'), lw_subaccount, os_image, tags)
+            except Exception as ex:
+                logger.warning(f'Host could not be parsed due to incomplete inventory information: {ex} \n{r}')
                 pass
 
     if check_truncation(list_azure_instances):
@@ -378,16 +372,13 @@ def apply_agent_presence_filtering(instance_inventory, list_agent_instances, lw_
     # Set Ops
     #########
     for instance_id in instance_inventory:
-
-        urn_result = get_urn_from_instanceid(instance_id)
-        is_kubernetes = INSTANCE_CLUSTER_CACHE[instance_id] if instance_id in INSTANCE_CLUSTER_CACHE else False
-        normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, lw_subaccount, urn_result[3])
+        normalized_output = INVENTORY_CACHE[instance_id]
 
         if instance_id in set_agent_instances:
-            matched_instances.append(normalized_urn)
+            matched_instances.append(normalized_output)
             # TODO: add secondary check for "premptible instances"
         else:
-            instances_without_agents.append(normalized_urn)
+            instances_without_agents.append(normalized_output)
 
     for instance in list_agent_instances:
         if not any(instance in instance_urn.urn for instance_urn in matched_instances):
@@ -402,9 +393,9 @@ def apply_agent_presence_filtering(instance_inventory, list_agent_instances, lw_
 
 def generate_subaccount_report(client, start_time, end_time, lw_subaccount):
     list_agent_instances = get_agent_instances(client, start_time, end_time)
-    list_gcp_instances = get_gcp_instance_inventory(client, start_time, end_time)
-    list_aws_instances = get_aws_instance_inventory(client, start_time, end_time)
-    list_azure_instances = get_azure_instance_inventory(client, start_time, end_time)
+    list_gcp_instances = get_gcp_instance_inventory(client, start_time, end_time, lw_subaccount)
+    list_aws_instances = get_aws_instance_inventory(client, start_time, end_time, lw_subaccount)
+    list_azure_instances = get_azure_instance_inventory(client, start_time, end_time, lw_subaccount)
 
     all_instances_inventory = set(list_aws_instances) | set(list_gcp_instances) | set(list_azure_instances) # union the three sets
     instances_without_agents, matched_instances, agents_without_inventory = apply_agent_presence_filtering(all_instances_inventory, list_agent_instances, lw_subaccount)

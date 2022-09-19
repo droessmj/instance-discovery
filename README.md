@@ -30,11 +30,12 @@ Note: As we don't currently inventory Fargate tasks, these will always show as "
 | short | long                              | default | help                                                                                                                                                                             |
 | :---- | :-------------------------------- | :------ | :--------------------------------------------------------------------------------------------|
 | `-h`  | `--help`                          |         | show this help message and exit                                                                                                                                                 |
-|       | `--account`                       | `None`  | The Lacework account to use                                                                                                                                                  |
+|       | `--account`                       | `None`  | The Lacework account to use                                                                  |
 |       | `--subaccount`                    | `None`  | The Lacework sub-account to use                                                                                                                                                  |
-|       | `--api-key`                       | `None`  | The Lacework API key to use                                                                                                                                                  |
+|       | `--api-key`                       | `None`  | The Lacework API key to use                                                                  |
 |       | `--api-secret`                    | `None`  | The Lacework API secret to use                                                                                                                                                  |
 | `-p`  | `--profile`                       | `None`  | The Lacework CLI profile to use                                                                                                                                                  |
-|       | `--csv`                               | `False`  | Enable csv output |
+|       | `--current-sub-account-only`      | `False` | Default behavior will iterate all Lacework sub-subaccounts                                   |
+|       | `--csv`                           | `False` | Enable csv output                                                                            |
 |       | `--json`                          | `False` | Enable json output      
 |       | `--debug`                         | `False` | Enable debug logging                                                                         |

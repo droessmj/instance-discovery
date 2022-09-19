@@ -430,6 +430,32 @@ def apply_cross_account_reconciliations(instances_without_agents, agents_without
     return (instances_without_agents, agents_without_inventory)
 
 
+def output_statistics(instance_result, user_profile_data):
+
+    # self.instances_without_agents = list(instances_without_agents)
+    # self.instances_with_agents = list(instances_with_agents)
+    # self.agents_without_inventory = list(agents_without_inventory)
+
+    print(f'Number of distinct hosts identified during inventory assessment: {len(instance_result.instances_without_agents + instance_result.instances_with_agents)}')
+    print(f'Number of hosts which report successful agent operation: {len(instance_result.instances_with_agents)}')
+    print(f'Coverage Percentage: {round((len(instance_result.instances_with_agents) / len(instance_result.instances_without_agents + instance_result.instances_with_agents)) * 100, 2)}%')
+
+    if not args.current_sub_account_only:
+        for lw_subaccount in user_profile_data.get('accounts', []):
+            lw_subaccount_name = lw_subaccount.get('accountName','')
+
+            instances_without_agents_count = len([i for i in instance_result.instances_without_agent if i.subaccount == lw_subaccount_name])
+            instances_with_agent_count = len([i for i in instance_result.instances_with_agents if i.subaccount == lw_subaccount_name])
+
+            print()
+            print(f'{lw_subaccount_name} -- Number of distinct hosts identified during inventory assessment: {len(instances_without_agents_count + instances_with_agent_count)}')
+            print(f'{lw_subaccount_name} -- Number of hosts which report successful agent operation: {len(instances_with_agent_count)}')
+            print(f'{lw_subaccount_name} -- Coverage Percentage: {round((len(instances_with_agent_count) / len(instances_without_agents_count + instances_with_agent_count)) * 100, 2)}%')
+
+
+    # the above, per-sub-account
+    print('instance result goes here')
+
 def main(args):
 
     if not args.profile and not args.account and not args.subaccount and not args.api_key and not args.api_secret:
@@ -502,12 +528,15 @@ def main(args):
         instances_without_agents, agents_without_inventory = apply_cross_account_reconciliations(instances_without_agents, agents_without_inventory)
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
-    if args.json:
-        instance_result.printJson()
-    elif args.csv:
-        instance_result.printCsv()
+    if args.statistics:
+        output_statistics(instance_result,user_profile_data)
     else:
-        instance_result.printStandard()
+        if args.json:
+            instance_result.printJson()
+        elif args.csv:
+            instance_result.printCsv()
+        else:
+            instance_result.printStandard()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -557,6 +586,12 @@ if __name__ == '__main__':
         default=False,
         action='store_true',
         help='Emit results as csv'
+    )
+    parser.add_argument(
+        '--statistics',
+        default=False,
+        action='store_true',
+        help='Output only statistics'
     )
     parser.add_argument(
         '--debug',

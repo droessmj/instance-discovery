@@ -1,13 +1,10 @@
 from datetime import datetime, timedelta, timezone
-from pickle import NONE
-from pydoc import cli
-import re
-from xml.dom.minidom import Identified
 from laceworksdk import LaceworkClient
 import json
 import argparse
 import logging
 import os
+
 
 MAX_RESULT_SET = 500_000
 LOOKBACK_DAYS = 1
@@ -436,10 +433,10 @@ def output_statistics(instance_result, user_profile_data):
     # self.instances_without_agents = list(instances_without_agents)
     # self.instances_with_agents = list(instances_with_agents)
     # self.agents_without_inventory = list(agents_without_inventory)
-
+    coverage_percent = round((len(instance_result.instances_with_agents) / len(instance_result.instances_without_agents + instance_result.instances_with_agents)) * 100, 2) if len(instance_result.instances_with_agents) > 0 else 0
     print(f'Number of distinct hosts identified during inventory assessment: {len(instance_result.instances_without_agents + instance_result.instances_with_agents)}')
     print(f'Number of hosts which report successful agent operation: {len(instance_result.instances_with_agents)}')
-    print(f'Coverage Percentage: {round((len(instance_result.instances_with_agents) / len(instance_result.instances_without_agents + instance_result.instances_with_agents)) * 100, 2)}%')
+    print(f'Coverage Percentage: {coverage_percent}%')
 
     if not args.current_sub_account_only:
         for lw_subaccount in user_profile_data.get('accounts', []):

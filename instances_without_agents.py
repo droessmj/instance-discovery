@@ -444,7 +444,7 @@ def output_statistics(instance_result, user_profile_data):
         for lw_subaccount in user_profile_data.get('accounts', []):
             lw_subaccount_name = lw_subaccount.get('accountName','')
 
-            instances_without_agents_count = len([i for i in instance_result.instances_without_agent if i.subaccount == lw_subaccount_name])
+            instances_without_agents_count = len([i for i in instance_result.instances_without_agents if i.subaccount == lw_subaccount_name])
             instances_with_agent_count = len([i for i in instance_result.instances_with_agents if i.subaccount == lw_subaccount_name])
 
             print()

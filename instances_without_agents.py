@@ -141,7 +141,11 @@ def normalize_input(input, identifier):
             elif identifier == 'Aws':
                 normalized_output.append(r['resourceConfig']['InstanceId'])
                 os_image = str()
-                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'], os_image, r['resourceConfig']['Tags'])
+                try:
+                    tags = r['resourceConfig']['Tags']
+                except:
+                    pass
+                AWS_INVENTORY_CACHE[r['resourceConfig']['InstanceId']] = (r['urn'], is_kubernetes(r,identifier), r['resourceConfig']['LaunchTime'], os_image, tags)
 
 
             elif identifier == 'Gcp':

@@ -36,6 +36,7 @@ Note: As we don't currently inventory Fargate tasks, these will always show as "
 |       | `--api-secret`                    | `None`  | The Lacework API secret to use                                                                                                                                                  |
 | `-p`  | `--profile`                       | `None`  | The Lacework CLI profile to use                                                                                                                                                  |
 |       | `--current-sub-account-only`      | `False` | Default behavior will iterate all Lacework sub-subaccounts                                   |
+|       | `--statistics`                    | `False` | When selected, output will be deployment statistics will be provided instead of output results |
 |       | `--csv`                           | `False` | Enable csv output                                                                            |
 |       | `--json`                          | `False` | Enable json output      
 |       | `--debug`                         | `False` | Enable debug logging                                                                         |

@@ -286,7 +286,8 @@ def get_gcp_instance_inventory(client, start_time, end_time):
                                     break
                             count += 1
                     except:
-                        logger.warning(f'Unable to parse os_image info for instance {r}')
+                        if r['resourceConfig']['status'] != 'TERMINATED':
+                            logger.warning(f'Unable to parse os_image info for instance {r}')
 
                     GCP_INVENTORY_CACHE[r['resourceConfig']['id']] = (r['urn'], is_kubernetes(r,'Gcp'), r['resourceConfig']['creationTimestamp'], os_image)
                 except Exception as ex:
@@ -375,6 +376,7 @@ def apply_agent_presence_filtering(instance_inventory, list_agent_instances, lw_
     matched_instances = list()
     agents_without_inventory = list()
 
+    set_agent_instances = set(list_agent_instances)
     #########
     # Set Ops
     #########
@@ -384,11 +386,11 @@ def apply_agent_presence_filtering(instance_inventory, list_agent_instances, lw_
         is_kubernetes = INSTANCE_CLUSTER_CACHE[instance_id] if instance_id in INSTANCE_CLUSTER_CACHE else False
         normalized_urn = OutputRecord(urn_result[0], urn_result[2], is_kubernetes, lw_subaccount, urn_result[3])
 
-        if all(agent_instance not in instance_id for agent_instance in list_agent_instances):
-            instances_without_agents.append(normalized_urn)
+        if instance_id in set_agent_instances:
+            matched_instances.append(normalized_urn)
             # TODO: add secondary check for "premptible instances"
         else:
-            matched_instances.append(normalized_urn)
+            instances_without_agents.append(normalized_urn)
 
     for instance in list_agent_instances:
         if not any(instance in instance_urn.urn for instance_urn in matched_instances):
@@ -426,7 +428,6 @@ def apply_cross_account_reconciliations(instances_without_agents, agents_without
     # data has been de-normalized...maybe we need to pass the normal value in an OutputRecord for usage here?
 
     # set operation for agents w/o inventory? they should be distinct...may need to take normalizations into account?
-
     return (instances_without_agents, agents_without_inventory)
 
 

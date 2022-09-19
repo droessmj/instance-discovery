@@ -448,9 +448,9 @@ def output_statistics(instance_result, user_profile_data):
             instances_with_agent_count = len([i for i in instance_result.instances_with_agents if i.subaccount == lw_subaccount_name])
 
             print()
-            print(f'{lw_subaccount_name} -- Number of distinct hosts identified during inventory assessment: {len(instances_without_agents_count + instances_with_agent_count)}')
-            print(f'{lw_subaccount_name} -- Number of hosts which report successful agent operation: {len(instances_with_agent_count)}')
-            print(f'{lw_subaccount_name} -- Coverage Percentage: {round((len(instances_with_agent_count) / len(instances_without_agents_count + instances_with_agent_count)) * 100, 2)}%')
+            print(f'{lw_subaccount_name} -- Number of distinct hosts identified during inventory assessment: {instances_without_agents_count + instances_with_agent_count}')
+            print(f'{lw_subaccount_name} -- Number of hosts which report successful agent operation: {instances_with_agent_count}')
+            print(f'{lw_subaccount_name} -- Coverage Percentage: {round((instances_with_agent_count / instances_without_agents_count + instances_with_agent_count) * 100, 2)}%')
 
 
     # the above, per-sub-account

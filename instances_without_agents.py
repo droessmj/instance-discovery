@@ -455,9 +455,6 @@ def output_statistics(instance_result, user_profile_data):
             print(f'{lw_subaccount_name} -- Coverage Percentage: {coverage_percent}%')
 
 
-    # the above, per-sub-account
-    print('instance result goes here')
-
 def main(args):
 
     if not args.profile and not args.account and not args.subaccount and not args.api_key and not args.api_secret:

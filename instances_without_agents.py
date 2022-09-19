@@ -150,7 +150,8 @@ def apply_fargate_filter(client, start_time, end_time, instances_without_agents,
                 'endTime'   : end_time
             }, 
             'filters': [
-                { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task'}
+                { 'field': 'resourceType', 'expression': 'eq', 'value':'ecs:task'},
+                { 'field': 'resourceConfig.launchType', 'expression': 'eq', 'value':'FARGATE'}
             ],
             'csp': 'AWS'
         })

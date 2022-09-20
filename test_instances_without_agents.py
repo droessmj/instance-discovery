@@ -1,4 +1,3 @@
-from re import A
 import instances_without_agents
 
 # bad test I know..just working up to valuable stuff

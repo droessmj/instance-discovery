@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from inspect import _void
 from xml.dom.minidom import Identified
 from laceworksdk import LaceworkClient
 import json
@@ -15,7 +16,7 @@ INSTANCE_CLUSTER_CACHE = {}
 
 
 class OutputRecord():
-    def __init__(self, urn, creation_time, is_kubernetes, subaccount, os_image, tags=None):
+    def __init__(self, urn: str, creation_time: str, is_kubernetes: bool, subaccount: str, os_image: str, tags=None) -> None:
         self.urn = urn
         self.creation_time = creation_time
         self.is_kubernetes = is_kubernetes
@@ -37,7 +38,7 @@ class OutputRecord():
 
 
 class InstanceResult():
-    def __init__(self, instances_without_agents, instances_with_agents, agents_without_inventory) -> None:
+    def __init__(self, instances_without_agents: set, instances_with_agents: set, agents_without_inventory: set) -> None:
         self.instances_without_agents = list(instances_without_agents)
         self.instances_with_agents = list(instances_with_agents)
         self.agents_without_inventory = list(agents_without_inventory)
@@ -46,10 +47,10 @@ class InstanceResult():
         self.instances_with_agents.sort(key=lambda x: x.urn)
         self.agents_without_inventory.sort(key=lambda x: x.urn)
 
-    def printJson(self):
+    def printJson(self) -> None:
         print(json.dumps(self.__dict__, indent=4, sort_keys=True, default=serialize))
 
-    def printCsv(self):
+    def printCsv(self) -> None:
         print("Identifier,CreationTime,Instance_without_agent,Instance_reconciled_with_agent,Agent_without_inventory,Os_image,Tags,Subaccount")
         for i in self.instances_without_agents:
             print(f'{i.urn},{i.creation_time},true,,,"{i.os_image}","{str(i.tags).replace(chr(34),chr(39))}",{i.subaccount}')
@@ -60,8 +61,7 @@ class InstanceResult():
         for i in self.agents_without_inventory:
             print(f'{i.urn},{i.creation_time},,,true,"{i.os_image}","{str(i.tags).replace(chr(34),chr(39))}",{i.subaccount}')
 
-
-    def printStandard(self):
+    def printStandard(self) -> None:
         if len(self.instances_without_agents) > 0:
             print(f'Instances without agent:')
             for instance in self.instances_without_agents:
@@ -81,16 +81,16 @@ class InstanceResult():
             print('\n')
 
 
-def serialize(obj):
+def serialize(obj: object) -> dict:
     """JSON serializer for objects not serializable by default json code"""
     return obj.__dict__
 
 
-def get_all_tenant_subaccounts(client):
+def get_all_tenant_subaccounts(client: LaceworkClient) -> list:
     return [i['accountName'] for i in client.user_profile.get()['data'][0]['accounts']]
 
 
-def check_truncation(results):
+def check_truncation(results: list) -> bool:
     if type(results) == list:
         if len(results) >= MAX_RESULT_SET:
             return True
@@ -98,7 +98,7 @@ def check_truncation(results):
 
 
 # inspect resource to determine if it matches known identifiers marking it as a k8s node
-def is_kubernetes(resource, identifier):
+def is_kubernetes(resource: dict, identifier: str) -> bool:
     if identifier == "Aws":
         if 'Tags' in resource['resourceConfig']:
             for t in resource['resourceConfig']['Tags']:
@@ -119,7 +119,7 @@ def is_kubernetes(resource, identifier):
     return False
 
 
-def get_fargate_with_lacework_agents(input, lw_subaccount):
+def get_fargate_with_lacework_agents(input: object, lw_subaccount: str) -> tuple:
     tasks_with_agent = list()
     tasks_without_agent = list()
 
@@ -139,7 +139,7 @@ def get_fargate_with_lacework_agents(input, lw_subaccount):
     return (tasks_with_agent, tasks_without_agent)
 
 
-def apply_fargate_filter(client, start_time, end_time, instances_without_agents, matched_instances, agents_without_inventory, lw_subaccount_name):
+def apply_fargate_filter(client: LaceworkClient, start_time: str, end_time: str, instances_without_agents: list, matched_instances: list, agents_without_inventory: list, lw_subaccount_name: str) -> tuple:
 
     ##########
     # Fargate is different
@@ -181,7 +181,7 @@ def apply_fargate_filter(client, start_time, end_time, instances_without_agents,
     return (instances_without_agents, matched_instances, agents_without_inventory)
 
 
-def get_agent_instances(client, start_time, end_time):
+def get_agent_instances(client: LaceworkClient, start_time: str, end_time: str) -> list:
 
     ########
     # Agents
@@ -236,7 +236,7 @@ def get_agent_instances(client, start_time, end_time):
     return list_agent_instances
 
 
-def get_gcp_instance_inventory(client, start_time, end_time, lw_subaccount):
+def get_gcp_instance_inventory(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> list:
     ######
     # GCP
     ######
@@ -289,7 +289,7 @@ def get_gcp_instance_inventory(client, start_time, end_time, lw_subaccount):
     return list_gcp_instances
 
 
-def get_aws_instance_inventory(client, start_time, end_time, lw_subaccount):
+def get_aws_instance_inventory(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> list:
     ######
     # AWS
     ######
@@ -325,7 +325,7 @@ def get_aws_instance_inventory(client, start_time, end_time, lw_subaccount):
     return list_aws_instances
 
 
-def get_azure_instance_inventory(client, start_time, end_time, lw_subaccount):
+def get_azure_instance_inventory(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> list:
     ######
     # Azure
     ######
@@ -362,7 +362,7 @@ def get_azure_instance_inventory(client, start_time, end_time, lw_subaccount):
     return list_azure_instances
 
 
-def apply_agent_presence_filtering(instance_inventory, list_agent_instances, lw_subaccount):
+def apply_agent_presence_filtering(instance_inventory: list, list_agent_instances: list, lw_subaccount: str) -> tuple:
 
     instances_without_agents = list()
     matched_instances = list()
@@ -392,7 +392,7 @@ def apply_agent_presence_filtering(instance_inventory, list_agent_instances, lw_
     return (instances_without_agents, matched_instances, agents_without_inventory)
 
 
-def generate_subaccount_report(client, start_time, end_time, lw_subaccount):
+def generate_subaccount_report(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> tuple:
     list_agent_instances = get_agent_instances(client, start_time, end_time)
     list_gcp_instances = get_gcp_instance_inventory(client, start_time, end_time, lw_subaccount)
     list_aws_instances = get_aws_instance_inventory(client, start_time, end_time, lw_subaccount)
@@ -411,7 +411,7 @@ def generate_subaccount_report(client, start_time, end_time, lw_subaccount):
     return (instances_without_agents, matched_instances, agents_without_inventory)
 
 
-def apply_cross_account_reconciliations(instances_without_agents, agents_without_inventory):
+def apply_cross_account_reconciliations(instances_without_agents: set, agents_without_inventory: set) -> tuple:
 
     # perform a set operation on the i.URN, take first sub-account
     # data has been de-normalized...maybe we need to pass the normal value in an OutputRecord for usage here?
@@ -420,7 +420,7 @@ def apply_cross_account_reconciliations(instances_without_agents, agents_without
     return (instances_without_agents, agents_without_inventory)
 
 
-def output_statistics(instance_result, user_profile_data):
+def output_statistics(instance_result: InstanceResult, user_profile_data: dict) -> None:
 
     coverage_percent = round((len(instance_result.instances_with_agents) / len(instance_result.instances_without_agents + instance_result.instances_with_agents)) * 100, 2) if len(instance_result.instances_with_agents) > 0 else 0
     print(f'Number of distinct hosts identified during inventory assessment: {len(instance_result.instances_without_agents + instance_result.instances_with_agents)}')
@@ -442,7 +442,7 @@ def output_statistics(instance_result, user_profile_data):
             print(f'{lw_subaccount_name} -- Coverage Percentage: {coverage_percent}%')
 
 
-def main(args):
+def main(args: argparse.Namespace) -> None:
 
     if not args.profile and not args.account and not args.subaccount and not args.api_key and not args.api_secret:
         args.profile = 'default'

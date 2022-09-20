@@ -1,11 +1,10 @@
-from datetime import datetime, timedelta, timezone
-from inspect import _void
-from xml.dom.minidom import Identified
-from laceworksdk import LaceworkClient
 import json
 import argparse
 import logging
 import os
+
+from datetime import datetime, timedelta, timezone
+from laceworksdk import LaceworkClient
 
 
 MAX_RESULT_SET = 500_000
@@ -523,6 +522,7 @@ def main(args: argparse.Namespace) -> None:
             instance_result.printCsv()
         else:
             instance_result.printStandard()
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(

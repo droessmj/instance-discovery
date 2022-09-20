@@ -6,6 +6,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from laceworksdk import LaceworkClient
 
+logger = logging.getLogger('instance-discovery')
 
 MAX_RESULT_SET = 500_000
 LOOKBACK_DAYS = 1
@@ -456,6 +457,12 @@ def main(args: argparse.Namespace) -> None:
         logger.error('If passing credentials, please specify at least --account, --api-key, and --api-secret. --sub-account is optional for this input format.')
         exit(1)
 
+    # setup logger in main for testability
+    logging.basicConfig(
+        format='%(asctime)s %(name)s [%(levelname)s] %(message)s'
+    )
+    logger = logging.getLogger('instance-discovery')
+    logger.setLevel(os.getenv('LOG_LEVEL', logging.INFO))
 
     try:
         client = LaceworkClient(
@@ -586,11 +593,5 @@ if __name__ == '__main__':
         help='Enable debug logging'
     )
     args = parser.parse_args()
-
-    logging.basicConfig(
-        format='%(asctime)s %(name)s [%(levelname)s] %(message)s'
-    )
-    logger = logging.getLogger('instance-discovery')
-    logger.setLevel(os.getenv('LOG_LEVEL', logging.INFO))
 
     main(args)

@@ -16,7 +16,7 @@ INSTANCE_CLUSTER_CACHE = {}
 
 
 class OutputRecord():
-    def __init__(self, urn: str, creation_time: str, is_kubernetes: bool, subaccount: str, os_image: str, tags=None) -> None:
+    def __init__(self, urn: str, creation_time: str, is_kubernetes: bool, subaccount: str, os_image: str, tags: object = None) -> None:
         self.urn = urn
         self.creation_time = creation_time
         self.is_kubernetes = is_kubernetes
@@ -38,7 +38,7 @@ class OutputRecord():
 
 
 class InstanceResult():
-    def __init__(self, instances_without_agents: set, instances_with_agents: set, agents_without_inventory: set) -> None:
+    def __init__(self, instances_without_agents: set[OutputRecord], instances_with_agents: set[OutputRecord], agents_without_inventory: set[OutputRecord]) -> None:
         self.instances_without_agents = list(instances_without_agents)
         self.instances_with_agents = list(instances_with_agents)
         self.agents_without_inventory = list(agents_without_inventory)
@@ -119,7 +119,7 @@ def is_kubernetes(resource: dict, identifier: str) -> bool:
     return False
 
 
-def get_fargate_with_lacework_agents(input: object, lw_subaccount: str) -> tuple:
+def get_fargate_with_lacework_agents(input: object, lw_subaccount: str) -> tuple[list, list]:
     tasks_with_agent = list()
     tasks_without_agent = list()
 
@@ -139,7 +139,7 @@ def get_fargate_with_lacework_agents(input: object, lw_subaccount: str) -> tuple
     return (tasks_with_agent, tasks_without_agent)
 
 
-def apply_fargate_filter(client: LaceworkClient, start_time: str, end_time: str, instances_without_agents: list, matched_instances: list, agents_without_inventory: list, lw_subaccount_name: str) -> tuple:
+def apply_fargate_filter(client: LaceworkClient, start_time: str, end_time: str, instances_without_agents: list, matched_instances: list, agents_without_inventory: list, lw_subaccount_name: str) -> tuple[list, list, list]:
 
     ##########
     # Fargate is different
@@ -181,7 +181,7 @@ def apply_fargate_filter(client: LaceworkClient, start_time: str, end_time: str,
     return (instances_without_agents, matched_instances, agents_without_inventory)
 
 
-def get_agent_instances(client: LaceworkClient, start_time: str, end_time: str) -> list:
+def get_agent_instances(client: LaceworkClient, start_time: str, end_time: str) -> list[dict]:
 
     ########
     # Agents
@@ -236,7 +236,7 @@ def get_agent_instances(client: LaceworkClient, start_time: str, end_time: str) 
     return list_agent_instances
 
 
-def get_gcp_instance_inventory(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> list:
+def get_gcp_instance_inventory(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> list[dict]:
     ######
     # GCP
     ######
@@ -289,7 +289,7 @@ def get_gcp_instance_inventory(client: LaceworkClient, start_time: str, end_time
     return list_gcp_instances
 
 
-def get_aws_instance_inventory(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> list:
+def get_aws_instance_inventory(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> list[dict]:
     ######
     # AWS
     ######
@@ -325,7 +325,7 @@ def get_aws_instance_inventory(client: LaceworkClient, start_time: str, end_time
     return list_aws_instances
 
 
-def get_azure_instance_inventory(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> list:
+def get_azure_instance_inventory(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> list[dict]:
     ######
     # Azure
     ######
@@ -362,7 +362,7 @@ def get_azure_instance_inventory(client: LaceworkClient, start_time: str, end_ti
     return list_azure_instances
 
 
-def apply_agent_presence_filtering(instance_inventory: list, list_agent_instances: list, lw_subaccount: str) -> tuple:
+def apply_agent_presence_filtering(instance_inventory: list, list_agent_instances: list, lw_subaccount: str) -> tuple[list, list, list]:
 
     instances_without_agents = list()
     matched_instances = list()
@@ -392,7 +392,7 @@ def apply_agent_presence_filtering(instance_inventory: list, list_agent_instance
     return (instances_without_agents, matched_instances, agents_without_inventory)
 
 
-def generate_subaccount_report(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> tuple:
+def generate_subaccount_report(client: LaceworkClient, start_time: str, end_time: str, lw_subaccount: str) -> tuple[list, list, list]:
     list_agent_instances = get_agent_instances(client, start_time, end_time)
     list_gcp_instances = get_gcp_instance_inventory(client, start_time, end_time, lw_subaccount)
     list_aws_instances = get_aws_instance_inventory(client, start_time, end_time, lw_subaccount)
@@ -411,7 +411,7 @@ def generate_subaccount_report(client: LaceworkClient, start_time: str, end_time
     return (instances_without_agents, matched_instances, agents_without_inventory)
 
 
-def apply_cross_account_reconciliations(instances_without_agents: set, agents_without_inventory: set) -> tuple:
+def apply_cross_account_reconciliations(instances_without_agents: set, agents_without_inventory: set) -> tuple[set, set]:
 
     # perform a set operation on the i.URN, take first sub-account
     # data has been de-normalized...maybe we need to pass the normal value in an OutputRecord for usage here?

@@ -8,11 +8,11 @@ from laceworksdk import LaceworkClient
 
 logger = logging.getLogger('instance-discovery')
 
-MAX_RESULT_SET = 500_000
-LOOKBACK_DAYS = 1
-INVENTORY_CACHE = {}
-AGENT_CACHE = {}
-INSTANCE_CLUSTER_CACHE = {}
+MAX_RESULT_SET: int = 500_000
+LOOKBACK_DAYS: int = 1
+INVENTORY_CACHE: dict = {}
+AGENT_CACHE: dict = {}
+INSTANCE_CLUSTER_CACHE: dict = {}
 
 
 class OutputRecord():

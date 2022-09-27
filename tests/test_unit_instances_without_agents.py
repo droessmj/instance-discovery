@@ -4,6 +4,7 @@ sys.path.append('../instance-discovery')
 
 import instances_without_agents
 from argparse import Namespace
+from unittest.mock import patch
 
 #########################
 # check_truncation
@@ -124,3 +125,34 @@ def test_output_statistics_current_account_3(capsys):
     assert('Number of hosts which report successful agent operation: 4' not in out)
     assert('Coverage Percentage: 50.0%' in out)
     assert(err == '')
+
+
+###################################
+# get_azure_instance_inventory
+###################################
+
+
+
+###################################
+# apply_agent_presence_filtering
+###################################
+# @patch('instances_without_agents.INVENTORY_CACHE')
+# def test_apply_agent_presence_filtering_1(mock_cache):
+#     # TODO: Figure out how to actually leverage the mock_cache correctly...
+#     #      ...or refactor to pass Cache as a parameter rather than a global var
+#     mock_cache.return_val = {
+#         'abc': instances_without_agents.OutputRecord('abc','',True,'','',{}),
+#         'xyz': instances_without_agents.OutputRecord('xyz','',True,'','',{})
+#     }
+
+#     input_instance_inventory = ['abc', 'xyz']
+#     input_list_agent_instances = ['abc']
+#     input_lw_subaccount = 'test'
+
+#     result_instances_without_agents, result_matched_instances, result_agents_without_inventory = instances_without_agents.apply_agent_presence_filtering(input_instance_inventory, input_list_agent_instances, input_lw_subaccount)
+
+#     assert(len(result_matched_instances) == 1)
+#     assert(result_matched_instances[0].urn =='abc')
+
+#     assert(len(result_instances_without_agents) == 1)
+#     assert(result_instances_without_agents[0].urn =='xyz')

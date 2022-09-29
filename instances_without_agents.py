@@ -8,11 +8,11 @@ from laceworksdk import LaceworkClient
 
 logger = logging.getLogger('instance-discovery')
 
-MAX_RESULT_SET = 500_000
-LOOKBACK_DAYS = 1
-INVENTORY_CACHE = {}
-AGENT_CACHE = {}
-INSTANCE_CLUSTER_CACHE = {}
+MAX_RESULT_SET: int = 500_000
+LOOKBACK_DAYS: int = 1
+INVENTORY_CACHE: dict = {}
+AGENT_CACHE: dict = {}
+INSTANCE_CLUSTER_CACHE: dict = {}
 
 
 class OutputRecord():
@@ -198,7 +198,7 @@ def get_agent_instances(client: LaceworkClient, start_time: str, end_time: str) 
         for r in page['data']:
             if ('tags' in r.keys() 
                     and 'VmProvider' in r['tags'].keys() 
-                    and r['tags']['VmProvider'] == 'GCE'):
+                    and (r['tags']['VmProvider'] == 'GCE' or r['tags']['VmProvider'] == 'GCP')):
                 
                 list_agent_instances.append(r['tags']['InstanceId'])
                 AGENT_CACHE[r['tags']['InstanceId']] = 'gcp' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
@@ -420,7 +420,7 @@ def apply_cross_account_reconciliations(instances_without_agents: set, agents_wi
     return (instances_without_agents, agents_without_inventory)
 
 
-def output_statistics(instance_result: InstanceResult, user_profile_data: dict) -> None:
+def output_statistics(args: argparse.Namespace, instance_result: InstanceResult, user_profile_data: dict) -> None:
 
     coverage_percent = round((len(instance_result.instances_with_agents) / len(instance_result.instances_without_agents + instance_result.instances_with_agents)) * 100, 2) if len(instance_result.instances_with_agents) > 0 else 0
     print(f'Number of distinct hosts identified during inventory assessment: {len(instance_result.instances_without_agents + instance_result.instances_with_agents)}')
@@ -521,7 +521,7 @@ def main(args: argparse.Namespace) -> None:
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.statistics:
-        output_statistics(instance_result,user_profile_data)
+        output_statistics(args, instance_result,user_profile_data)
     else:
         if args.json:
             instance_result.printJson()

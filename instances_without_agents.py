@@ -2,9 +2,11 @@ import json
 import argparse
 import logging
 import os
+import copy
 
 from datetime import datetime, timedelta, timezone
 from laceworksdk import LaceworkClient
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger('instance-discovery')
 
@@ -201,7 +203,10 @@ def get_agent_instances(client: LaceworkClient, start_time: str, end_time: str) 
                     and (r['tags']['VmProvider'] == 'GCE' or r['tags']['VmProvider'] == 'GCP')):
                 
                 list_agent_instances.append(r['tags']['InstanceId'])
-                AGENT_CACHE[r['tags']['InstanceId']] = 'gcp' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
+                try:
+                    AGENT_CACHE[r['tags']['InstanceId']] = 'gcp' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
+                except:
+                    AGENT_CACHE[r['tags']['InstanceId']] = 'gcp' + '/' + r['tags']['Hostname']
 
             elif ('tags' in r.keys() 
                     and 'VmProvider' in r['tags'].keys() 
@@ -502,22 +507,30 @@ def main(args: argparse.Namespace) -> None:
         instances_without_agents, matched_instances, agents_without_inventory = generate_subaccount_report(client, start_time, end_time, lw_subaccount)
 
     else:
-        # Iterate through all subaccounts
-        for lw_subaccount in user_profile_data.get('accounts', []):
-            lw_subaccount_name = lw_subaccount.get('accountName','')
-            client.set_subaccount(lw_subaccount_name)
 
-            result = generate_subaccount_report(client, start_time, end_time, lw_subaccount_name)
-            instances_without_agents = instances_without_agents.union(result[0])
-            matched_instances = matched_instances.union(result[1])
-            agents_without_inventory = agents_without_inventory.union(result[2])
-    
-        # TODO: Cross-sub-account reconciliations
-        # Scenarios:
-        # - I have a host that's reconciled (matched_instances)...no more processing to accomplish
-        # - Dupes should be handled by the Sets above...
-            # - I have inventory in sa1, agent in sa2..check for cross-account agent
-        instances_without_agents, agents_without_inventory = apply_cross_account_reconciliations(instances_without_agents, agents_without_inventory)
+        executor_tasks = list()
+        with ThreadPoolExecutor() as executor:
+
+            # Iterate through all subaccounts
+            for lw_subaccount in user_profile_data.get('accounts', []):
+                lw_subaccount_name = lw_subaccount.get('accountName','')
+                client.set_subaccount(lw_subaccount_name)
+
+                executor_tasks.append(executor.submit(generate_subaccount_report, copy.deepcopy(client), start_time, end_time, lw_subaccount_name))
+
+            for task in as_completed(executor_tasks):
+                result = task.result()
+
+                instances_without_agents = instances_without_agents.union(result[0])
+                matched_instances = matched_instances.union(result[1])
+                agents_without_inventory = agents_without_inventory.union(result[2])
+            
+                # TODO: Cross-sub-account reconciliations
+                # Scenarios:
+                # - I have a host that's reconciled (matched_instances)...no more processing to accomplish
+                # - Dupes should be handled by the Sets above...
+                    # - I have inventory in sa1, agent in sa2..check for cross-account agent
+                instances_without_agents, agents_without_inventory = apply_cross_account_reconciliations(instances_without_agents, agents_without_inventory)
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.statistics:

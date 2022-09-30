@@ -203,7 +203,10 @@ def get_agent_instances(client: LaceworkClient, start_time: str, end_time: str) 
                     and (r['tags']['VmProvider'] == 'GCE' or r['tags']['VmProvider'] == 'GCP')):
                 
                 list_agent_instances.append(r['tags']['InstanceId'])
-                AGENT_CACHE[r['tags']['InstanceId']] = 'gcp' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
+                try:
+                    AGENT_CACHE[r['tags']['InstanceId']] = 'gcp' + '/' + r['tags']['ProjectId'] + '/' + r['tags']['Hostname']
+                except:
+                    AGENT_CACHE[r['tags']['InstanceId']] = 'gcp' + '/' + r['tags']['Hostname']
 
             elif ('tags' in r.keys() 
                     and 'VmProvider' in r['tags'].keys() 

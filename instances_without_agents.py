@@ -416,15 +416,6 @@ def generate_subaccount_report(client: LaceworkClient, start_time: str, end_time
     return (instances_without_agents, matched_instances, agents_without_inventory)
 
 
-def apply_cross_account_reconciliations(instances_without_agents: set, agents_without_inventory: set) -> tuple[set, set]:
-
-    # perform a set operation on the i.URN, take first sub-account
-    # data has been de-normalized...maybe we need to pass the normal value in an OutputRecord for usage here?
-
-    # set operation for agents w/o inventory? they should be distinct...may need to take normalizations into account?
-    return (instances_without_agents, agents_without_inventory)
-
-
 def output_statistics(args: argparse.Namespace, instance_result: InstanceResult, user_profile_data: dict) -> None:
 
     coverage_percent = round((len(instance_result.instances_with_agents) / len(instance_result.instances_without_agents + instance_result.instances_with_agents)) * 100, 2) if len(instance_result.instances_with_agents) > 0 else 0
@@ -524,13 +515,6 @@ def main(args: argparse.Namespace) -> None:
                 instances_without_agents = instances_without_agents.union(result[0])
                 matched_instances = matched_instances.union(result[1])
                 agents_without_inventory = agents_without_inventory.union(result[2])
-            
-                # TODO: Cross-sub-account reconciliations
-                # Scenarios:
-                # - I have a host that's reconciled (matched_instances)...no more processing to accomplish
-                # - Dupes should be handled by the Sets above...
-                    # - I have inventory in sa1, agent in sa2..check for cross-account agent
-                instances_without_agents, agents_without_inventory = apply_cross_account_reconciliations(instances_without_agents, agents_without_inventory)
 
     instance_result = InstanceResult(instances_without_agents, matched_instances, agents_without_inventory)
     if args.statistics:

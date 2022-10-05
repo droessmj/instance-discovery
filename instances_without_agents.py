@@ -530,7 +530,7 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='A script to automatically issue container vulnerability scans to Lacework based on running containers'
+        description='Discover hosts not running the Lacework agent'
     )
     parser.add_argument(
         '--account',

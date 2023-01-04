@@ -121,21 +121,40 @@ def is_kubernetes(resource: dict, identifier: str) -> bool:
     return False
 
 
-def get_fargate_with_lacework_agents(input: object, lw_subaccount: str) -> tuple[list, list]:
+def get_fargate_with_lacework_agents(fargate_inventory: object, fargate_agent_info: object, lw_subaccount: str) -> tuple[list, list]:
     tasks_with_agent = list()
     tasks_without_agent = list()
 
-    for page in input:
+    active_fargate_task_arns = list()
+    inactive_fargate_task_arns = list()
+    for page in fargate_agent_info:
+        for task in page['data']:
+            task_arn = task['tags']['net.lacework.aws.fargate.taskarn']
+            if task['status'] == 'ACTIVE':
+                active_fargate_task_arns.append(task_arn)
+            else:
+                inactive_fargate_task_arns.append(task_arn)
+
+    for page in fargate_inventory:
         for task in page['data']:
             task_placed = False
             tags = task['resourceConfig']['tags'] if 'tags' in task['resourceConfig'] else ''
+
+            # Look for Lacework sidecar container
             if 'containers' in task['resourceConfig']:
                 for container in task['resourceConfig']['containers']:
                     if 'datacollector' in container['image']:
                         tasks_with_agent.append(OutputRecord(container['taskArn'],'',False, lw_subaccount, '', tags))
                         task_placed = True
                         break
-                if not task_placed:
+
+            # Look for Lacework agent with active status
+            if not task_placed:
+                if task['resourceConfig']['taskArn'] in active_fargate_task_arns:
+                    tasks_with_agent.append(OutputRecord(task['resourceConfig']['taskArn'],'',False, lw_subaccount, '', tags))
+                elif (
+                    task['resourceConfig']['taskArn'] not in inactive_fargate_task_arns
+                ):  # Exclude inactive tasks
                     tasks_without_agent.append(OutputRecord(task['resourceConfig']['taskArn'],'',False, lw_subaccount, '', tags))
                 
     return (tasks_with_agent, tasks_without_agent)
@@ -158,8 +177,23 @@ def apply_fargate_filter(client: LaceworkClient, start_time: str, end_time: str,
             'csp': 'AWS'
         })
 
+    fargate_agent_info = client.agent_info.search(json={
+            'timeFilter': { 
+                'startTime' : start_time, 
+                'endTime'   : end_time
+            }, 
+            'filters': [
+                {'field': 'tags.VmProvider', 'expression': 'eq', 'value': 'AWS'},
+                {
+                    'field': 'tags.VmInstanceType',
+                    'expression': 'eq',
+                    'value': 'AWS_ECS_V4FARGATE',
+                },
+            ],
+        })
+
     # TODO: type the task
-    fargate_tasks_with_agent, fargate_tasks_without_agent = get_fargate_with_lacework_agents(fargate_inventory, lw_subaccount_name)
+    fargate_tasks_with_agent, fargate_tasks_without_agent = get_fargate_with_lacework_agents(fargate_inventory, fargate_agent_info, lw_subaccount_name)
 
     # Fargate complications -- Currently going to run this as a completely seperate filter
     # and modify the three existing result sets independently
